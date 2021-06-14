@@ -193,7 +193,31 @@ DLT_STATIC DltReturnValue dlt_gateway_check_timeout(DltGatewayConnection *con,
 
     con->timeout = (int)strtol(value, NULL, 10);
 
-    if (con->timeout > 0)
+
+    if (con->timeout >= 0)
+        return DLT_RETURN_OK;
+
+    return DLT_RETURN_ERROR;
+}
+
+/**
+ * Check connection interval value in General section
+ *
+ * @param con     DltGateway to be updated
+ * @param value   string to be tested
+ * @return Value from DltReturnValue enum
+ */
+DLT_STATIC DltReturnValue dlt_gateway_check_interval(DltGateway *gateway,
+                                                    char *value)
+{
+    if ((gateway == NULL) || (value == NULL)) {
+        dlt_vlog(LOG_ERR, "%s: wrong parameter\n", __func__);
+        return DLT_RETURN_WRONG_PARAMETER;
+    }
+
+    gateway->interval = (int)strtol(value, NULL, 10);
+
+    if (gateway->interval > 0)
         return DLT_RETURN_OK;
 
     return DLT_RETURN_ERROR;
@@ -289,7 +313,7 @@ DLT_STATIC DltReturnValue dlt_gateway_check_control_messages(DltGatewayConnectio
             return DLT_RETURN_ERROR;
         }
 
-        con->p_control_msgs->id = strtol(token, NULL, 16);
+        con->p_control_msgs->id = (uint32_t) strtol(token, NULL, 16);
         con->p_control_msgs->user_id = DLT_SERVICE_ID_PASSIVE_NODE_CONNECT;
         con->p_control_msgs->type = CONTROL_MESSAGE_ON_STARTUP;
         con->p_control_msgs->req = CONTROL_MESSAGE_NOT_REQUESTED;
@@ -360,7 +384,7 @@ DLT_STATIC DltReturnValue dlt_gateway_check_periodic_control_messages(
         p_token = strtok_r(token, ":", &p_rest);
 
         if ((p_token != NULL) && (strlen(p_token) != 0)) {
-            id = strtol(p_token, NULL, 16);
+            id = (uint32_t) strtol(p_token, NULL, 16);
 
             /* get back to head */
             con->p_control_msgs = head;
@@ -369,7 +393,7 @@ DLT_STATIC DltReturnValue dlt_gateway_check_periodic_control_messages(
             while (con->p_control_msgs != NULL) {
                 if (con->p_control_msgs->id == id) {
                     con->p_control_msgs->type = CONTROL_MESSAGE_BOTH;
-                    con->p_control_msgs->interval = strtol(p_rest, NULL, 10);
+                    con->p_control_msgs->interval = (int) strtol(p_rest, NULL, 10);
 
                     if (con->p_control_msgs->interval <= 0)
                         dlt_vlog(LOG_WARNING,
@@ -406,7 +430,7 @@ DLT_STATIC DltReturnValue dlt_gateway_check_periodic_control_messages(
                 con->p_control_msgs->user_id = DLT_SERVICE_ID_PASSIVE_NODE_CONNECT;
                 con->p_control_msgs->type = CONTROL_MESSAGE_PERIODIC;
                 con->p_control_msgs->req = CONTROL_MESSAGE_NOT_REQUESTED;
-                con->p_control_msgs->interval = strtol(p_rest, NULL, 10);
+                con->p_control_msgs->interval = (int) strtol(p_rest, NULL, 10);
 
                 if (con->p_control_msgs->interval <= 0)
                     dlt_vlog(LOG_WARNING,
@@ -492,7 +516,38 @@ DLT_STATIC DltGatewayConf configuration_entries[GW_CONF_COUNT] = {
     }
 };
 
+DLT_STATIC DltGatewayGeneralConf general_entries[GW_CONF_COUNT] = {
+    [GW_CONF_GENERAL_INTERVAL] = {
+        .key = "Interval",
+        .func = dlt_gateway_check_interval,
+        .is_opt = 1
+    }
+};
+
 #define DLT_GATEWAY_NUM_PROPERTIES_MAX GW_CONF_COUNT
+
+/**
+ * Check if gateway connection general configuration parameter is valid.
+ *
+ * @param gateway    DltGateway
+ * @param ctype      DltGatwayGeneralConnection property
+ * @param value      specified property value from configuration file
+ * @return Value from DltReturnValue enum
+ */
+DLT_STATIC DltReturnValue dlt_gateway_check_general_param(DltGateway *gateway,
+                                                  DltGatewayGeneralConfType ctype,
+                                                  char *value)
+{
+    if ((gateway == NULL) || (value == NULL)) {
+        dlt_vlog(LOG_ERR, "%s: wrong parameter\n", __func__);
+        return DLT_RETURN_WRONG_PARAMETER;
+    }
+
+    if (ctype < GW_CONF_GENEREL_COUNT)
+        return general_entries[ctype].func(gateway, value);
+
+    return DLT_RETURN_ERROR;
+}
 
 /**
  * Check if gateway connection configuration parameter is valid.
@@ -603,6 +658,7 @@ int dlt_gateway_configure(DltGateway *gateway, char *config_file, int verbose)
     int ret = 0;
     int i = 0;
     DltConfigFile *file = NULL;
+    int num_sections = 0;
 
     PRINT_FUNCTION_VERBOSE(verbose);
 
@@ -615,16 +671,34 @@ int dlt_gateway_configure(DltGateway *gateway, char *config_file, int verbose)
     file = dlt_config_file_init(config_file);
 
     /* get number of entries and allocate memory to store information */
-    ret = dlt_config_file_get_num_sections(file, &gateway->num_connections);
-
+    ret = dlt_config_file_get_num_sections(file, &num_sections);
     if (ret != 0) {
         dlt_config_file_release(file);
         dlt_log(LOG_ERR, "Invalid number of sections in configuration file\n");
         return DLT_RETURN_ERROR;
     }
 
-    gateway->connections = calloc(sizeof(DltGatewayConnection),
-                                  gateway->num_connections);
+    ret = dlt_config_file_check_section_name_exists(file, DLT_GATEWAY_GENERAL_SECTION_NAME);
+    if (ret == -1) {
+        /*
+         * No General section in configuration file.
+         * Try to use default for interval.
+         */
+        gateway->num_connections = num_sections;
+        dlt_vlog(LOG_WARNING,
+                "Missing General section in gateway. Using default interval %d (secs)\n",
+                gateway->interval);
+    }
+    else {
+        /*
+         * Since the General section is also counted in num_sections,
+         * so number of connections must be number of sections - 1.
+         */
+        gateway->num_connections = num_sections - 1;
+    }
+
+    gateway->connections = calloc((size_t) gateway->num_connections,
+                                sizeof(DltGatewayConnection));
 
     if (gateway->connections == NULL) {
         dlt_config_file_release(file);
@@ -632,10 +706,11 @@ int dlt_gateway_configure(DltGateway *gateway, char *config_file, int verbose)
         return DLT_RETURN_ERROR;
     }
 
-    for (i = 0; i < gateway->num_connections; i++) {
+    for (i = 0; i < num_sections; i++) {
         DltGatewayConnection tmp;
         int invalid = 0;
         DltGatewayConfType j = 0;
+        DltGatewayGeneralConfType g = 0;
         char section[DLT_CONFIG_FILE_ENTRY_MAX_LEN] = { '\0' };
         char value[DLT_CONFIG_FILE_ENTRY_MAX_LEN] = { '\0' };
 
@@ -646,57 +721,99 @@ int dlt_gateway_configure(DltGateway *gateway, char *config_file, int verbose)
         tmp.port = DLT_DAEMON_TCP_PORT;
 
         ret = dlt_config_file_get_section_name(file, i, section);
-
-        for (j = 0; j < GW_CONF_COUNT; j++) {
-            ret = dlt_config_file_get_value(file,
-                                            section,
-                                            configuration_entries[j].key,
-                                            value);
-
-            if ((ret != 0) && configuration_entries[j].is_opt) {
-                /* Use default values for this key */
-                dlt_vlog(LOG_WARNING,
-                         "Using default for %s.\n",
-                         configuration_entries[j].key);
-                continue;
-            }
-            else if (ret != 0)
-            {
-                dlt_vlog(LOG_WARNING,
-                         "Missing configuration for %s.\n",
-                         configuration_entries[j].key);
-                invalid = 1;
-                break;
-            }
-
-            /* check value and store temporary */
-            ret = dlt_gateway_check_param(gateway, &tmp, j, value);
-
-            if (ret != 0)
-                dlt_vlog(LOG_ERR,
-                         "Configuration %s = %s is invalid.\n"
-                         "Using default.\n",
-                         configuration_entries[j].key, value);
+        if (ret != 0) {
+            dlt_log(LOG_WARNING, "Get section name failed\n");
+            continue;
         }
 
-        if (invalid) {
-            dlt_vlog(LOG_ERR,
-                     "%s configuration is invalid.\n"
-                     "Ignoring.\n",
-                     section);
+        if (strncmp(section, DLT_GATEWAY_GENERAL_SECTION_NAME,
+                sizeof(DLT_GATEWAY_GENERAL_SECTION_NAME)) == 0) {
+            for (g = 0; g < GW_CONF_GENEREL_COUNT; g++) {
+                ret = dlt_config_file_get_value(file,
+                                                section,
+                                                general_entries[g].key,
+                                                value);
+
+                if ((ret != 0) && general_entries[g].is_opt) {
+                    /* Use default values for this key */
+                    dlt_vlog(LOG_WARNING,
+                             "Using default for %s.\n",
+                             general_entries[g].key);
+                    continue;
+                }
+                else if (ret != 0)
+                {
+                    dlt_vlog(LOG_WARNING,
+                             "Missing configuration for %s.\n",
+                             general_entries[g].key);
+                    break;
+                }
+
+                /* check value and store general configuration */
+                ret = dlt_gateway_check_general_param(gateway, g, value);
+
+                if (ret != 0)
+                    dlt_vlog(LOG_ERR,
+                             "Configuration %s = %s is invalid. Using default.\n",
+                             general_entries[g].key, value);
+            }
         }
         else {
-            ret = dlt_gateway_store_connection(gateway, &tmp, verbose);
+            for (j = 0; j < GW_CONF_COUNT; j++) {
+                ret = dlt_config_file_get_value(file,
+                                                section,
+                                                configuration_entries[j].key,
+                                                value);
 
-            if (ret != 0)
-                dlt_log(LOG_ERR, "Storing gateway connection data failed\n");
+                if ((ret != 0) && configuration_entries[j].is_opt) {
+                    /* Use default values for this key */
+                    dlt_vlog(LOG_WARNING,
+                             "Using default for %s.\n",
+                             configuration_entries[j].key);
+                    continue;
+                }
+                else if (ret != 0)
+                {
+                    dlt_vlog(LOG_WARNING,
+                             "Missing configuration for %s.\n",
+                             configuration_entries[j].key);
+                    invalid = 1;
+                    break;
+                }
+
+                /* check value and store temporary */
+                ret = dlt_gateway_check_param(gateway, &tmp, j, value);
+
+                if (ret != 0)
+                    dlt_vlog(LOG_ERR,
+                             "Configuration %s = %s is invalid.\n"
+                             "Using default.\n",
+                             configuration_entries[j].key, value);
+            }
+
+            if (invalid) {
+                dlt_vlog(LOG_ERR,
+                         "%s configuration is invalid.\n"
+                         "Ignoring.\n",
+                         section);
+            }
+            else {
+                ret = dlt_gateway_store_connection(gateway, &tmp, verbose);
+
+                if (ret != 0)
+                    dlt_log(LOG_ERR, "Storing gateway connection data failed\n");
+            }
         }
 
         /* strdup used inside some get_value function */
-        free(tmp.ecuid);
-        tmp.ecuid = NULL;
-        free(tmp.ip_address);
-        tmp.ip_address = NULL;
+        if (tmp.ecuid != NULL) {
+            free(tmp.ecuid);
+            tmp.ecuid = NULL;
+        }
+        if (tmp.ip_address != NULL) {
+            free(tmp.ip_address);
+            tmp.ip_address = NULL;
+        }
     }
 
     dlt_config_file_release(file);
@@ -717,6 +834,7 @@ int dlt_gateway_init(DltDaemonLocal *daemon_local, int verbose)
     if (gateway != NULL) {
         /* Get default value from daemon_local */
         gateway->send_serial = daemon_local->flags.lflag;
+        gateway->interval = DLT_GATEWAY_TIMER_DEFAULT_INTERVAL;
 
         if (dlt_gateway_configure(gateway,
                                   daemon_local->flags.gatewayConfigFile,
@@ -873,11 +991,16 @@ int dlt_gateway_establish_connections(DltGateway *gateway,
 
                 con->timeout_cnt++;
 
-                if (con->timeout_cnt > con->timeout) {
-                    con->trigger = DLT_GATEWAY_DISABLED;
-                    dlt_log(LOG_WARNING,
-                            "Passive Node connection retry timed out. "
-                            "Give up.\n");
+                if (con->timeout > 0) {
+                    if (con->timeout_cnt > con->timeout) {
+                        con->trigger = DLT_GATEWAY_DISABLED;
+                        dlt_log(LOG_WARNING,
+                                "Passive Node connection retry timed out. "
+                                "Give up.\n");
+                    }
+                }
+                else if (con->timeout == 0) {
+                    dlt_vlog(LOG_DEBUG, "Retried [%d] times\n", con->timeout_cnt);
                 }
             }
         }
@@ -971,7 +1094,7 @@ DLT_STATIC DltReturnValue dlt_gateway_parse_get_log_info(DltDaemon *daemon,
         return DLT_RETURN_WRONG_PARAMETER;
     }
 
-    if (DLT_CHECK_RCV_DATA_SIZE(msg->datasize, sizeof(DltServiceGetLogInfoResponse)) < 0)
+    if (dlt_check_rcv_data_size(msg->datasize, sizeof(DltServiceGetLogInfoResponse)) < 0)
         return DLT_RETURN_ERROR;
 
     /* if the request was send from gateway, clear all application and context list */
@@ -1044,8 +1167,8 @@ DLT_STATIC DltReturnValue dlt_gateway_parse_get_log_info(DltDaemon *daemon,
             if (dlt_daemon_context_add(daemon,
                                        app.app_id,
                                        con.context_id,
-                                       con.log_level,
-                                       con.trace_status,
+                                       (int8_t) con.log_level,
+                                       (int8_t) con.trace_status,
                                        0,
                                        -1,
                                        con.context_description,
@@ -1093,7 +1216,7 @@ DLT_STATIC int dlt_gateway_parse_get_default_log_level(DltDaemon *daemon,
         return DLT_RETURN_WRONG_PARAMETER;
     }
 
-    if (DLT_CHECK_RCV_DATA_SIZE(msg->datasize,
+    if (dlt_check_rcv_data_size(msg->datasize,
                                 sizeof(DltServiceGetDefaultLogLevelResponse)) < 0) {
         dlt_log(LOG_ERR, "Received data incomplete.\n");
         return DLT_RETURN_ERROR;
@@ -1131,7 +1254,7 @@ DLT_STATIC int dlt_gateway_control_service_logstorage(DltDaemon *daemon,
                                                       int verbose)
 {
     unsigned int connection_type = 0;
-    int i = 0;
+    uint32_t i = 0;
 
     if (daemon_local->flags.offlineLogstorageMaxDevices <= 0) {
         dlt_log(LOG_INFO,
@@ -1146,7 +1269,7 @@ DLT_STATIC int dlt_gateway_control_service_logstorage(DltDaemon *daemon,
             /* Check if log level of running application needs an update */
             dlt_daemon_logstorage_update_application_loglevel(daemon,
                                                               daemon_local,
-                                                              i,
+                                                              (int) i,
                                                               verbose);
     }
 
@@ -1198,7 +1321,7 @@ DltReturnValue dlt_gateway_process_passive_node_messages(DltDaemon *daemon,
     }
 
     /* nearly copy and paste of dlt_client_main_loop function */
-    if (dlt_receiver_receive(receiver, DLT_RECEIVE_SOCKET) <= 0) {
+    if (dlt_receiver_receive(receiver) <= 0) {
         /* No more data to be received */
         if (dlt_message_free(&msg, verbose) < 0) {
             dlt_log(LOG_ERR, "Cannot free DLT message\n");
@@ -1226,7 +1349,7 @@ DltReturnValue dlt_gateway_process_passive_node_messages(DltDaemon *daemon,
 
     while (dlt_message_read(&msg,
                             (unsigned char *)receiver->buf,
-                            receiver->bytesRcvd,
+                            (unsigned int) receiver->bytesRcvd,
                             0,
                             verbose) == DLT_MESSAGE_ERROR_OK) {
         DltStandardHeaderExtra *header = (DltStandardHeaderExtra *)
@@ -1293,19 +1416,17 @@ DltReturnValue dlt_gateway_process_passive_node_messages(DltDaemon *daemon,
                 return DLT_RETURN_ERROR;
             }
 
-            if (dlt_daemon_client_send(DLT_DAEMON_SEND_TO_ALL,
+            dlt_daemon_client_send(DLT_DAEMON_SEND_TO_ALL,
                                        daemon,
                                        daemon_local,
                                        msg.headerbuffer,
                                        sizeof(DltStorageHeader),
                                        msg.headerbuffer + sizeof(DltStorageHeader),
-                                       msg.headersize - sizeof(DltStorageHeader),
+                                       (int) (msg.headersize - sizeof(DltStorageHeader)),
                                        msg.databuffer,
-                                       msg.datasize,
-                                       verbose) != DLT_DAEMON_ERROR_OK)
-                dlt_log(LOG_WARNING, "Forward message to clients failed!\n");
-        }
-        else { /* otherwise remove this connection and do not connect again */
+                                       (int) msg.datasize,
+                                       verbose);
+        } else { /* otherwise remove this connection and do not connect again */
             dlt_vlog(LOG_WARNING,
                      "Received ECUid (%s) differs to configured ECUid(%s). "
                      "Discard this message.\n",
@@ -1328,19 +1449,19 @@ DltReturnValue dlt_gateway_process_passive_node_messages(DltDaemon *daemon,
 
         if (msg.found_serialheader) {
             if (dlt_receiver_remove(receiver,
-                                    msg.headersize +
+                                    (int) (msg.headersize +
                                     msg.datasize -
                                     sizeof(DltStorageHeader) +
-                                    sizeof(dltSerialHeader)) == -1) {
+                                    sizeof(dltSerialHeader))) == -1) {
                 /* Return value ignored */
                 dlt_message_free(&msg, verbose);
                 return DLT_RETURN_ERROR;
             }
         }
         else if (dlt_receiver_remove(receiver,
-                                     msg.headersize +
+                                     (int) (msg.headersize +
                                      msg.datasize -
-                                     sizeof(DltStorageHeader)) == -1) {
+                                     sizeof(DltStorageHeader))) == -1) {
             /* Return value ignored */
             dlt_message_free(&msg, verbose);
             return DLT_RETURN_ERROR;
@@ -1436,7 +1557,7 @@ int dlt_gateway_forward_control_message(DltGateway *gateway,
     }
 
     if (con->send_serial) { /* send serial header */
-        ret = send(con->client.sock,
+        ret = (int) send(con->client.sock,
                    (void *)dltSerialHeader,
                    sizeof(dltSerialHeader),
                    0);
@@ -1447,7 +1568,7 @@ int dlt_gateway_forward_control_message(DltGateway *gateway,
         }
     }
 
-    ret = send(con->client.sock,
+    ret = (int) send(con->client.sock,
                msg->headerbuffer + sizeof(DltStorageHeader),
                msg->headersize - sizeof(DltStorageHeader),
                0);
@@ -1457,7 +1578,7 @@ int dlt_gateway_forward_control_message(DltGateway *gateway,
         return DLT_RETURN_ERROR;
     }
     else {
-        ret = send(con->client.sock, msg->databuffer, msg->datasize, 0);
+        ret = (int) send(con->client.sock, msg->databuffer, msg->datasize, 0);
 
         if (ret == -1) {
             dlt_log(LOG_ERR, "Sending message to passive DLT Daemon failed\n");
@@ -1476,7 +1597,7 @@ int dlt_gateway_forward_control_message(DltGateway *gateway,
 
 int dlt_gateway_process_on_demand_request(DltGateway *gateway,
                                           DltDaemonLocal *daemon_local,
-                                          char *node_id,
+                                          char node_id[DLT_ID_SIZE],
                                           int connection_status,
                                           int verbose)
 {
@@ -1491,13 +1612,12 @@ int dlt_gateway_process_on_demand_request(DltGateway *gateway,
     }
 
     /* find connection by ECU id */
-    for (i = 0; i < gateway->num_connections; i++)
-        if (strncmp(node_id, gateway->connections->ecuid, DLT_ID_SIZE) == 0) {
+    for (i = 0; i < gateway->num_connections; i++) {
+        if (strncmp(node_id, gateway->connections[i].ecuid, DLT_ID_SIZE) == 0) {
             con = &gateway->connections[i];
             break;
         }
-
-
+    }
 
     if (con == NULL) {
         dlt_log(LOG_WARNING, "Specified ECUid not found\n");
@@ -1577,7 +1697,7 @@ int dlt_gateway_send_control_message(DltGatewayConnection *con,
     }
 
     if (con->send_serial) { /* send serial header */
-        ret = send(con->client.sock,
+        ret = (int) send(con->client.sock,
                    (void *)dltSerialHeader,
                    sizeof(dltSerialHeader),
                    0);

@@ -32,7 +32,7 @@
 
 void exec(const char *cmd, char *buffer, size_t length);
 void printMemoryUsage();
-char *occupyMemory(uint size);
+char *occupyMemory(int size);
 void do_example_test();
 void do_dlt_test();
 
@@ -41,7 +41,7 @@ int num_repetitions;
 int main(int argc, char **argv)
 {
     if (argc > 1)
-        num_repetitions = strtol(argv[1], 0, 10);
+        num_repetitions = (int) strtol(argv[1], 0, 10);
     else
         num_repetitions = 1000;
 
@@ -113,7 +113,7 @@ void exec(const char *cmd, char *buffer, size_t length)
     if ((pipe = popen(cmd, "r")) == NULL)
         return;
 
-    while (fgets(buffer, length, pipe) != NULL);
+    while (fgets(buffer, (int) length, pipe) != NULL);
 
     if (pipe != NULL)
         pclose(pipe);
@@ -131,7 +131,7 @@ void printMemoryUsage()
     printf("%s", result);
 }
 
-char *occupyMemory(uint size)
+char *occupyMemory(int size)
 {
     char *buf = (char *)malloc(size * sizeof(char));
 

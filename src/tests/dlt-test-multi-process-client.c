@@ -48,9 +48,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <time.h>
-#include <fcntl.h>
 #include <sys/uio.h>
-#include <sys/stat.h>
 
 /* DLT Library includes */
 #include "dlt_client.h"
@@ -270,7 +268,7 @@ void print_stats(s_statistics stats, s_parameters params)
     }
 
     fflush(stdout);
-    last_print_time = time(NULL);
+    last_print_time = (int) time(NULL);
 }
 /**
  * Callback for dlt client
@@ -293,15 +291,15 @@ int receive(DltMessage *msg, void *data)
     if (stats.first_message_time == 0)
         stats.first_message_time = time(NULL);
 
-    int buflen = msg->datasize + 1;
-    char *buf = malloc(buflen);
+    int buflen = (int) msg->datasize + 1;
+    char *buf = malloc((size_t) buflen);
 
     if (buf == 0) {
         printf("Out of memory\n");
         return -1;
     }
 
-    memset(buf, 0, buflen);
+    memset(buf, 0, (size_t) buflen);
 
     dlt_message_payload(msg, buf, buflen - 1, DLT_OUTPUT_ASCII, 0);
 
@@ -322,7 +320,7 @@ int receive(DltMessage *msg, void *data)
         iov[1].iov_base = msg->databuffer;
         iov[1].iov_len = msg->datasize;
 
-        stats.output_bytes += writev(params->output_handle, iov, 2);
+        stats.output_bytes += (int) writev(params->output_handle, iov, 2);
     }
 
     if (params->messages_left < 1)

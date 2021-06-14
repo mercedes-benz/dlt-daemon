@@ -52,6 +52,7 @@
 #define DLT_OFFLINE_LOGSTORAGE_H
 
 #include <search.h>
+#include <stdbool.h>
 #include "dlt_common.h"
 #include "dlt-daemon_cfg.h"
 #include "dlt_config_file_parser.h"
@@ -113,9 +114,9 @@
 #define DLT_OFFLINE_LOGSTORAGE_IS_STRATEGY_SET(S, s) ((S)&(s))
 
 /* logstorage max cache */
-unsigned int g_logstorage_cache_max;
+extern unsigned int g_logstorage_cache_max;
 /* current logstorage cache size */
-unsigned int g_logstorage_cache_size;
+extern unsigned int g_logstorage_cache_size;
 
 typedef struct
 {
@@ -139,8 +140,18 @@ typedef struct DltLogStorageFileList
     /* List for filenames */
     char *name;                         /* Filename */
     unsigned int idx;                   /* File index */
-    struct DltLogStorageFileList *next;
+    struct DltLogStorageFileList *next; /* Pointer to next */
 } DltLogStorageFileList;
+
+typedef struct DltNewestFileName DltNewestFileName;
+
+struct DltNewestFileName
+{
+    char *file_name;    /* The unique name of file in whole a dlt_logstorage.conf */
+    char *newest_file;  /* The real newest name of file which is associated with filename.*/
+    unsigned int wrap_id;   /* Identifier of wrap around happened for this file_name */
+    DltNewestFileName *next; /* Pointer to next */
+};
 
 typedef struct DltLogStorageFilterConfig DltLogStorageFilterConfig;
 
@@ -152,6 +163,8 @@ struct DltLogStorageFilterConfig
     int log_level;                  /* Log level number configured for filter */
     int reset_log_level;            /* reset Log level to be sent on disconnect */
     char *file_name;                /* File name for log storage configured for filter */
+    char *working_file_name;        /* Current open log file name */
+    unsigned int wrap_id;           /* Identifier of wrap around happened for this filter */
     unsigned int file_size;         /* MAX File size of storage file configured for filter */
     unsigned int num_files;         /* MAX number of storage files configured for filters */
     int sync;                       /* Sync strategy */
@@ -160,7 +173,8 @@ struct DltLogStorageFilterConfig
     int (*dlt_logstorage_prepare)(DltLogStorageFilterConfig *config,
                                   DltLogStorageUserConfig *file_config,
                                   char *dev_path,
-                                  int log_msg_size);
+                                  int log_msg_size,
+                                  DltNewestFileName *newest_file_info);
     int (*dlt_logstorage_write)(DltLogStorageFilterConfig *config,
                                 DltLogStorageUserConfig *file_config,
                                 char *dev_path,
@@ -202,6 +216,8 @@ typedef struct
     unsigned int connection_type;      /* Type of connection */
     unsigned int config_status;        /* Status of configuration */
     int write_errors;                  /* number of write errors */
+    DltNewestFileName *newest_file_list; /* List of newest file name */
+    int maintain_logstorage_loglevel;  /* Permission to maintain the logstorage loglevel*/
 } DltLogStorage;
 
 typedef struct {
@@ -211,7 +227,7 @@ typedef struct {
 } DltLogstorageGeneralConf;
 
 typedef enum {
-    DLT_LOGSTORAGE_GENERAL_CONF_BLOCKMODE = 0,
+    DLT_LOGSTORAGE_GENERAL_CONF_MAINTAIN_LOGSTORAGE_LOGLEVEL = 1,
     DLT_LOGSTORAGE_GENERAL_CONF_COUNT
 } DltLogstorageGeneralConfType;
 

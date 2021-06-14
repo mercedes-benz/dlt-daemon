@@ -4,9 +4,199 @@ Back to [README.md](../README.md)
 
 ## Version
 
-2.18.4 STABLE
+2.18.6 STABLE
 
 ## Changes
+
+### 2.18.6
+
+   * Update releaseNotes and version to v2.18.6
+   * doc: Limitation to SIGUSR1 usage on Android
+   * gtest_dlt_common: fix seg fault when using memcpy().
+   * example: Added customization of CxtID and AppID
+   * other: fix remaining conversion warnings
+   * library: fix conversion warnings
+   * tests: fix conversion warnings
+   * daemon: fix conversion warnings
+   * shared: fix conversion warnings
+   * logstorage: fix conversion warnings
+   * console :fix conversion warnings
+   * gateway: fix compile warnings
+   * readme: cpack document for debian package
+   * CMakeList: implement cpack for debian package
+   * dlt-receive: flush stdout buffer by signal
+   * gtest: Include necessary header
+   * doc: Update doc for the maintain logstorage loglevel implementation
+   * logstorage: Implement general config to maintain logstorage loglevel
+   * daemon: Correct order of runtime config load.
+   * libdlt: Use SIGUSR1 for thread on Android
+   * dlt-daemon: log levels are not controlled
+   * dlt-daemon: complete logstorage path with '/'
+   * libdlt: Use poll to avoid CPU high load
+   * libdlt: Flush all data in atexit_handler
+   * dlt-convert: replace system() by dlt_execute_command()
+   * dlt_common: Execute system command using execvp
+   * logstorage: snprintf return check
+   * logstorage: Update unit test
+   * logstorage: Add debug logs
+   * logstorage: Modify rearranging file
+   * logstorage: Handle wrap-around
+   * libdlt: support short version
+   * design doc: update spec for new environment variable
+   * doc: update disable injection msg for developer
+   * libdlt: disable injection msg via env var
+   * doc: Rewrote the DLT user documentation.
+   * daemon: Alternative of timerfd in QNX
+   * bug-fix: fix invalid file descriptor check
+   * dlt_user: fix invalid poll timeout
+   * README: Switch from travis-ci.org to travis-ci.com
+   * Add support for logging with VSOCK (#255)
+   * Use dlt_defaults for dlt-logd-converter in Android.bp (#271)
+   * dlt-control.c: return -1 on error (#259)
+   * Check size of ring buffer (#269)
+   * dlt_common: Fix buffer overflow in dlt_filter_load (#275)
+   * dlt-daemon: Adds an option to disable injection mode (#266)
+   * Add message length check
+   * Init logd crash buffer
+   * Avoid memory access errors with 4-chars context ids (#250)
+   * dlt_client.c: remove misleading error message (#258)
+   * Fix overflow for -d argument in dlt-example-user (#270)
+   * dlt-daemon.c: exit early on error (#261)
+   * Remove nonexistent file from Android.bp (#264)
+   * dlt-control.c: initialize dltdata via struct literal (#257)
+   * dlt-common.c: ensure null terminated string (#256)
+   * Make it easier to use libdlt when building DLT as a CMake subproject (#254)
+   * Simplify setting of CONFIGURATION_FILES_DIR in CMakeLists.txt (#247)
+   * Create codeql-analysis.yml (#252)
+   * Modify CMAKE_C_COMPILER check for QNX to accept "qcc" (#246)
+   * dlt_offline: fix build failures with gcc-10 (#245)
+   * Implement DLTClient for UDP multicast (#240)
+   * Revert "dlt_offline: fix build failures with gcc-10"
+   * dlt_offline: fix build failures with gcc-10
+   * sd-daemon.c: Fix build with newer glibc and musl libc
+   * dlt_user.c: fix the lack of DLT_NETWORK_TRACE_ENABLE definition
+
+### 2.18.5
+
+   * Update releaseNotes and version to v2.18.5
+   * slog2 adapter on QNX
+   * Update gtest_dlt_all.sh to detect core dump
+   * dlt-daemon.c: fix printf format %d to %ld that formats a long
+   * doc/CMakeList.txt: replace dlt_design_specification.txt to .md
+   * network trace: Fix macro usage
+   * limit logspam in gateway on client overflow
+   * Android.bp: fix dlt_user.h genrule
+   * logstorage: Issue with more than 2 filters
+   * remove unused feature
+   * gtest_dlt_daemon_gateway: correct comparison operator syntax
+   * set DLT_NETWORK_TRACE_ENABLE by cmakedefine
+   * doc: Update dlt_offline_logstorage.md
+   * UT: Fix segfault in logstorage test
+   * logstorage: support all stragegies
+   * update cmake VERSION variables
+   * simplify and fix android version script
+   * execute unittests with cmake
+   * dlt_design_specification: update content
+   * dlt_design_specification: convert from .txt to .md format
+   * logstorage: fix syncbehaviour
+   * daemon: Fix smoketest
+   * unittest: Update according to API's changes
+   * offline storage: Improvement log messages at bottom
+   * common: Isolate FIFO/Unix socket
+   * libdlt: Relocate dltFifoBaseDir setting
+   * doc: md file for dlt_gateway.conf
+   * network trace: Include necessary headers
+   * network trace: Add mqueue verification
+   * Unittest for new api
+   * Remove duplicate definition of DLT_CONVERT_TEXTBUFSIZE
+   * Improve performance of DLT file parsing
+   * relocation dlt_check_envvar() and update dlt_init() functions
+   * Redirect stdout to stderr
+   * Unittest: Update testcase
+   * gateway: Improvement of handling Gateway config
+   * daemon: Avoid spamming message buffer overflow
+   * gateway: Support infinite loop of retry
+   * gateway: Configurable interval time
+   * tests: remove unused zlib include
+   * disable android services by default
+   * logstorage: Add NULL check of IDs
+   * snprintf ret > 0 is not always an error
+   * fix some gcc9 compiler warnings
+   * fix clang warnings about GNU stuff
+   * android logd forwarder
+   * fix gateway config element search
+   * doc: update a note for logstorage with wildcard
+   * daemon: logstorage with wildcards
+   * Limit log messages on full buffer
+   * Android: Enable Android build
+   * logstorage: Filter section handling
+   * doc: Logstorage non-verbose filter
+   * correct errno usage in dlt_stop_threads
+   * shared: Read DLT header until it's found
+   * Use ssize_t for bytes_written
+   * Fix dlt-sortbytimestamp
+   * Remove DLT_PACKED redefinition guard in dlt_common.h
+   * rename definition PACKED to DLT_PACKED
+   * daemon: Remove empty line in daemon log
+   * Revert "dlt_common: Fix buffer overflow in dlt_buffer_get (#215)"
+   * FIX: prevent usage of uninitialized message queue handle
+   * Add unit tests for new sized string functions
+   * Add documentation for new sized string functions
+   * Add macro wrappers for new sized string functions
+   * Minor optimization
+   * Add functions for writing strings with known sizes
+   * Add helper function for writing strings with known sizes
+   * Fixed empty internal message in dlt-daemon.c (#225)
+   * common: Fix uint64 type (#217)
+   * dlt_common: Fix buffer overflow in dlt_buffer_get (#215)
+   * FIX: Check validity of `file` pointer before usage.
+   * doc/dlt_for_developers.md: Fix wrong DLT include directive
+   * Remove naming of variadic macro parameters
+   * sys/poll.h: deprecate old sys/poll.h include header, now glibc/musl wants poll.h being included directly. This fixes a build failure on musl systems with strict c hardening flags
+   * dlt-test-init-free: fix build failure with strict compiler flags, due to uint being undefined. This is actually an "int" type, looking at the test implementation
+   * dlt_user.h: fix build when musl is the libc implementation, by adding a missing include for pthread_t reference:
+   * dlt.conf: suppress the warnings udp multicast (#197)
+   * dlt_daemon_socket: leave while socket binds fails
+   * dlt_user: init DltContextData before use
+   * dlt-daemon: fix resource leak
+   * console: fix memleak of dlt-logstorage-list
+   * BugFix: SEGFAULT when using AppArmor (#192)
+   * Fix compiler warnings: pointer of type ‘void *’ used in arithmetic (#196)
+   * Change the DLT_CHECK_RCV_DATA_SIZE macro to an internal function (#191)
+   * Fix a potential memory leak in file transfer (#126)
+   * Provide DLT_GET_APPID macro (#187) (#188)
+   * dlt-offline-trace: fix bug and hardcode (#174) (#186)
+   * Avoided Seg fault in dlt_message_payload (#179) (#181)
+   * Improvement: Make ZLib dependency optional (#182)
+   * fix the dlt offline trace file name creation (#178)
+   * libdlt: fix memory leak
+   * Removed unused headers(epoll) in UDP connection
+   * Fix: Propper usage of LoggingMode: "uncrustification"
+   * Fix: Propper usage of LoggingMode in ".../dlt-runtime.cfg"
+   * libdlt: reattachment and improvement in dlt thread (#171)
+   * dlt-system: Call tzset before localtime_r (#165)
+   * Update cmakelist, fix build due to copy-paste error (#170)
+   * Bugfix: dlt-system-journal
+   * Proper setup and error checking of pthread_create
+   * udp: Disable WITH_UDP_CONNECTION as default
+   * doxygen improvement
+   * doc: Modify markdown doc generation
+   * doc: Update dlt_for_developers.md
+   * cmake improvement for Logstorage console
+   * cmake add component for libdlt.so
+   * parser: Change maximum number of config section
+   * common: Remove unused structure
+   * dlt_common: Use defined macro
+   * libdlt: calculate resend buffer memory
+   * lib: Disable extended header in non verbose mode by env var
+   * shm: Resend dlt msg when client connect
+   * lib: Remove else nothing
+   * network trace: Do not allow DLT usage in forked child
+   * lib: Assign fd after it's closed
+   * console: Add get sw version control msg
+   * console: Tool to merge multiple DLT files
+   * dlt-test: Add message length option
+   * Add user custom timestamp interface
 
 ### 2.18.4
 

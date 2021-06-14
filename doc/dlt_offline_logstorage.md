@@ -79,7 +79,10 @@ SpecificSize=<spec size in bytes>    # Store logs in storage devices after speci
 The Parameter "SyncBehavior","EcuID" and "SpecificSize" are optional - all
 others are mandatory.
 
-An configuration file might look like:
+If both of the parameter "LogAppName" and "ContextName" are set to wildcard or
+not present in the configuration file, "EcuID" must be specified.
+
+A typical configuration file may look like:
 
 ```
 [FILTER1]
@@ -110,6 +113,44 @@ FileSize=250000
 NOFiles=5
 SyncBehavior=ON_FILE_SIZE,ON_DEMAND
 EcuID=ECU1
+```
+
+In case of Non-Verbose mode, following filters should be used.
+
+```
+[NON-VERBOSE-STORAGE-FILTER<unique number>]    # filter configuration name for a Non-Verbose passive node
+EcuID=<ECUid>                                  # Specify ECU identifier
+File=<file name>                               # Base name of the created files that containing the logs, e.g. "example". For further file naming scheme configurations see man dlt.conf
+FileSize=<file size in bytes>                  # Maximum file size in bytes
+NOFiles=<number of files>                      # Number of created files before oldest is deleted and a new one is created
+
+[NON-VERBOSE-LOGLEVEL-CTRL<unique number>]     # filter configuration name to control log level of Non-Verbose applications
+LogAppName=<APID>                              # Name of application (wildcard allowed)
+ContextName=<CTID>                             # Name of context (wildcard allowed)
+LogLevel=<Log level>                           # Define log level, e.g. DLT_LOG_INFO or DLT_LOG_FATAL
+EcuID=<ECUid>                                  # Specify ECU identifier
+```
+
+A typical configuration file may look like:
+
+```
+[NON-VERBOSE-STORAGE-FILTER1]
+EcuID=PASV
+File=scc
+FileSize=50000
+NOFiles=5
+
+[NON-VERBOSE-LOGLEVEL-CTRL1]
+LogAppName=LOG
+ContextName=TEST
+LogLevel=DLT_LOG_DEBUG
+EcuID=PASV
+
+[NON-VERBOSE-LOGLEVEL-CTRL2]
+LogAppName=.*
+ContextName=.*
+LogLevel=DLT_LOG_WARN
+EcuID=PASV
 ```
 
 
@@ -229,3 +270,27 @@ The following strategies are implemented:
 Note :
 1. Combinations (not allowed: combinations with ON_MSG,combination of ON\_FILE\_SIZE with ON\_SPECIFIC\_SIZE)
 2. If on\_demand sync strategy alone is specified, it is advised to concatenate the log files in sequential order before viewing it on viewer.
+3. In case multiple FILTERs use the same `File` value, it is recommened that the following settings must also have same values: `NOFiles`, `FileSize` and `SpecificSize`
+
+## Maintain Logstorage Log Level Implementation
+
+The log level setting of each user context in the logstorage FILTER will be
+treated as the highest priority. Other clients (e.g: dlt-control, dlt-viewer)
+can update the user context's log level to a lower level but can not update
+to a higher level. In case the clients need to update the user context's log
+level to a higher level, the new macro ```MaintainLogstorageLogLevel``` is
+implemented in the ```[General]``` session to allow changing user context's
+log level to any level or maintain the log level of logstorage configuration.
+
+A typical configuration file may look like:
+
+  ```
+  [General]
+  MaintainLogstorageLogLevel=OFF
+  ```
+
+By setting ```MaintainLogstorageLogLevel=OFF``` or ```MaintainLogstorageLogLevel=0```,
+the clients are able to update any log level to user contexts.
+
+By setting ```MaintainLogstorageLogLevel=ON``` or ```MaintainLogstorageLogLevel=1```
+or not set, the logstorage will maintain its log level as the highest priority.

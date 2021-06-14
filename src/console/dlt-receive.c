@@ -75,6 +75,8 @@
 #include <string.h>
 #include <glob.h>
 #include <syslog.h>
+#include <signal.h>
+#include <sys/socket.h>
 #ifdef __linux__
 #   include <linux/limits.h>
 #else
@@ -86,6 +88,24 @@
 
 #define DLT_RECEIVE_ECU_ID "RECV"
 
+DltClient dltclient;
+
+void signal_handler(int signal)
+{
+    switch (signal) {
+    case SIGHUP:
+    case SIGTERM:
+    case SIGINT:
+    case SIGQUIT:
+        /* stop main loop */
+        shutdown(dltclient.receiver.fd, SHUT_RD);
+        break;
+    default:
+        /* This case should never happen! */
+        break;
+    } /* switch */
+}
+
 /* Function prototypes */
 int dlt_receive_message_callback(DltMessage *message, void *data);
 
@@ -96,6 +116,7 @@ typedef struct {
     int mflag;
     int vflag;
     int yflag;
+    int uflag;
     char *ovalue;
     char *ovaluebase; /* ovalue without ".dlt" */
     char *fvalue;
@@ -108,6 +129,7 @@ typedef struct {
     int part_num;    /* number of current output file if limit was exceeded */
     DltFile file;
     DltFilter filter;
+    int port;
 } DltReceiveData;
 
 /**
@@ -131,6 +153,7 @@ void usage()
     printf("  -v            Verbose mode\n");
     printf("  -h            Usage\n");
     printf("  -y            Serial device mode\n");
+    printf("  -u            UDP multicast mode\n");
     printf("  -b baudrate   Serial device baudrate (Default: 115200)\n");
     printf("  -e ecuid      Set ECU ID (Default: RECV)\n");
     printf("  -o filename   Output messages in new DLT file\n");
@@ -138,6 +161,8 @@ void usage()
     printf("                When limit is reached, a new file is opened. Use K,M,G as\n");
     printf("                suffix to specify kilo-, mega-, giga-bytes respectively\n");
     printf("  -f filename   Enable filtering of messages\n");
+    printf("  -p port       Use the given port instead the default port\n");
+    printf("                Cannot be used with serial devices\n");
 }
 
 
@@ -205,7 +230,11 @@ int dlt_receive_open_output_file(DltReceiveData *dltdata)
     /* if (file_already_exists) */
     glob_t outer;
 
-    if (glob(dltdata->ovalue, GLOB_TILDE | GLOB_NOSORT, NULL, &outer) == 0) {
+    if (glob(dltdata->ovalue,
+#ifndef __ANDROID_API__
+                GLOB_TILDE |
+#endif
+                GLOB_NOSORT, NULL, &outer) == 0) {
         if (dltdata->vflag) {
             dlt_vlog(LOG_INFO, "File %s already exists, need to rename first\n", dltdata->ovalue);
         }
@@ -223,7 +252,11 @@ int dlt_receive_open_output_file(DltReceiveData *dltdata)
              * foo.1000.dlt
              * foo.11.dlt
              */
-            if (glob(pattern, GLOB_TILDE | GLOB_NOSORT, NULL, &inner) == 0) {
+            if (glob(pattern,
+#ifndef __ANDROID_API__
+                        GLOB_TILDE |
+#endif
+                        GLOB_NOSORT, NULL, &inner) == 0) {
                 /* search for the highest number used */
                 size_t i;
 
@@ -280,7 +313,6 @@ void dlt_receive_close_output_file(DltReceiveData *dltdata)
  */
 int main(int argc, char *argv[])
 {
-    DltClient dltclient;
     DltReceiveData dltdata;
     int c;
     int index;
@@ -292,6 +324,7 @@ int main(int argc, char *argv[])
     dltdata.mflag = 0;
     dltdata.vflag = 0;
     dltdata.yflag = 0;
+    dltdata.uflag = 0;
     dltdata.ovalue = 0;
     dltdata.ovaluebase = 0;
     dltdata.fvalue = 0;
@@ -301,11 +334,21 @@ int main(int argc, char *argv[])
     dltdata.ohandle = -1;
     dltdata.totalbytes = 0;
     dltdata.part_num = -1;
+    dltdata.port = 3490;
+
+    /* Config signal handler */
+    struct sigaction act;
+    act.sa_handler = signal_handler;
+    sigemptyset(&act.sa_mask);
+    sigaction(SIGHUP, &act, 0);
+    sigaction(SIGTERM, &act, 0);
+    sigaction(SIGINT, &act, 0);
+    sigaction(SIGQUIT, &act, 0);
 
     /* Fetch command line arguments */
     opterr = 0;
 
-    while ((c = getopt (argc, argv, "vashyxmf:o:e:b:c:")) != -1)
+    while ((c = getopt (argc, argv, "vashyuxmf:o:e:b:c:p:")) != -1)
         switch (c) {
         case 'v':
         {
@@ -342,6 +385,11 @@ int main(int argc, char *argv[])
             dltdata.yflag = 1;
             break;
         }
+        case 'u':
+        {
+            dltdata.uflag = 1;
+            break;
+        }
         case 'f':
         {
             dltdata.fvalue = optarg;
@@ -374,6 +422,11 @@ int main(int argc, char *argv[])
         case 'b':
         {
             dltdata.bvalue = atoi(optarg);
+            break;
+        }
+        case 'p':
+        {
+            dltdata.port = atoi(optarg);
             break;
         }
 
@@ -417,9 +470,15 @@ int main(int argc, char *argv[])
     dlt_client_register_message_callback(dlt_receive_message_callback);
 
     /* Setup DLT Client structure */
-    dltclient.mode = dltdata.yflag;
+    if(dltdata.uflag) {
+        dltclient.mode = DLT_CLIENT_MODE_UDP_MULTICAST;
+    }
+    else {
+        dltclient.mode = dltdata.yflag;
+    }
 
-    if (dltclient.mode == DLT_CLIENT_MODE_TCP) {
+    if (dltclient.mode == DLT_CLIENT_MODE_TCP || dltclient.mode == DLT_CLIENT_MODE_UDP_MULTICAST) {
+        dltclient.port = dltdata.port;
         for (index = optind; index < argc; index++)
             if (dlt_client_set_server_ip(&dltclient, argv[index]) == -1) {
                 fprintf(stderr, "set server ip didn't succeed\n");
@@ -568,12 +627,12 @@ int dlt_receive_message_callback(DltMessage *message, void *data)
         /* if file output enabled write message */
         if (dltdata->ovalue) {
             iov[0].iov_base = message->headerbuffer;
-            iov[0].iov_len = message->headersize;
+            iov[0].iov_len = (uint32_t) message->headersize;
             iov[1].iov_base = message->databuffer;
-            iov[1].iov_len = message->datasize;
+            iov[1].iov_len = (uint32_t) message->datasize;
 
             if (dltdata->climit > -1) {
-                int bytes_to_write = message->headersize + message->datasize;
+                uint32_t bytes_to_write = message->headersize + message->datasize;
 
                 if ((bytes_to_write + dltdata->totalbytes > dltdata->climit)) {
                     dlt_receive_close_output_file(dltdata);
@@ -588,7 +647,7 @@ int dlt_receive_message_callback(DltMessage *message, void *data)
                 }
             }
 
-            bytes_written = writev(dltdata->ohandle, iov, 2);
+            bytes_written = (int) writev(dltdata->ohandle, iov, 2);
 
             dltdata->totalbytes += bytes_written;
 

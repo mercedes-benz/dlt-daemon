@@ -34,7 +34,6 @@
 #include <stdlib.h>     /* for atoi() and exit() */
 #include <string.h>     /* for memset() */
 #include <unistd.h>     /* for close() */
-#include <fcntl.h>
 #include <signal.h>
 #include <syslog.h>
 #include <errno.h>
@@ -44,7 +43,6 @@
 #ifdef linux
 #   include <sys/timerfd.h>
 #endif
-#include <sys/stat.h>
 #include <sys/time.h>
 #if defined(linux) && defined(__NR_statx)
 #   include <linux/stat.h>
@@ -68,14 +66,16 @@ int dlt_daemon_socket_open(int *sock, unsigned int servPort, char *ip)
     /* create socket */
     if ((*sock = socket(AF_INET6, SOCK_STREAM, 0)) == -1) {
         lastErrno = errno;
-        dlt_vlog(LOG_WARNING, "dlt_daemon_socket_open: socket() error %d: %s\n", lastErrno, strerror(lastErrno));
+        dlt_vlog(LOG_ERR, "dlt_daemon_socket_open: socket() error %d: %s\n", lastErrno, strerror(lastErrno));
+        return -1;
     }
 
 #else
 
     if ((*sock = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
         lastErrno = errno;
-        dlt_vlog(LOG_WARNING, "dlt_daemon_socket_open: socket() error %d: %s\n", lastErrno, strerror(lastErrno));
+        dlt_vlog(LOG_ERR, "dlt_daemon_socket_open: socket() error %d: %s\n", lastErrno, strerror(lastErrno));
+        return -1;
     }
 
 #endif
@@ -85,10 +85,11 @@ int dlt_daemon_socket_open(int *sock, unsigned int servPort, char *ip)
     /* setsockpt SO_REUSEADDR */
     if (setsockopt(*sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
         lastErrno = errno;
-        dlt_vlog(LOG_WARNING,
+        dlt_vlog(LOG_ERR,
                  "dlt_daemon_socket_open: Setsockopt error %d in dlt_daemon_local_connection_init: %s\n",
                  lastErrno,
                  strerror(lastErrno));
+        return -1;
     }
 
     /* bind */
@@ -124,6 +125,7 @@ int dlt_daemon_socket_open(int *sock, unsigned int servPort, char *ip)
         lastErrno = errno;     /*close() may set errno too */
         close(*sock);
         dlt_vlog(LOG_WARNING, "dlt_daemon_socket_open: bind() error %d: %s\n", lastErrno, strerror(lastErrno));
+        return -1;
     }
 
     /*listen */
@@ -192,16 +194,17 @@ int dlt_daemon_socket_sendreliable(int sock, void *data_buffer, int message_size
     int data_sent = 0;
 
     while (data_sent < message_size) {
-        ssize_t ret = send(sock, data_buffer + data_sent, message_size - data_sent, 0);
+        ssize_t ret = send(sock,
+                           (uint8_t*)data_buffer + data_sent,
+                           (size_t) (message_size - data_sent),
+                           0);
 
         if (ret < 0) {
             dlt_vlog(LOG_WARNING,
-                     "dlt_daemon_socket_sendreliable: socket send failed [errno: %d]!\n",
-                     errno);
+                     "%s: socket send failed [errno: %d]!\n", __func__, errno);
             return DLT_DAEMON_ERROR_SEND_FAILED;
-        }
-        else {
-            data_sent += ret;
+        } else {
+            data_sent += (int) ret;
         }
     }
 

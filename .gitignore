@@ -5,8 +5,13 @@ automotive-dlt.spec
 automotive-dlt.pc
 config.h
 include/dlt/dlt_version.h
+include/dlt/dlt_user.h
 .project
 .cproject
 .settings
 .idea/
+*~
+*.o
+*.out
+*.swp
 cmake-build-debug/

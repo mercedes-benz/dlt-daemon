@@ -75,20 +75,23 @@
 
 #   include "dlt_types.h"
 #   include "dlt_common.h"
+#include <stdbool.h>
 
 typedef enum
 {
     DLT_CLIENT_MODE_UNDEFINED = -1,
     DLT_CLIENT_MODE_TCP,
     DLT_CLIENT_MODE_SERIAL,
-    DLT_CLIENT_MODE_UNIX
+    DLT_CLIENT_MODE_UNIX,
+    DLT_CLIENT_MODE_UDP_MULTICAST
 } DltClientMode;
 
 typedef struct
 {
     DltReceiver receiver;  /**< receiver pointer to dlt receiver structure */
     int sock;              /**< sock Connection handle/socket */
-    char *servIP;          /**< servIP IP adress/Hostname of TCP/IP interface */
+    char *servIP;          /**< servIP IP adress/Hostname of interface */
+    char *hostip;          /**< hostip IP address of UDP host receiver interface */
     int port;              /**< Port for TCP connections (optional) */
     char *serialDevice;    /**< serialDevice Devicename of serial device */
     char *socketPath;      /**< socketPath Unix socket path */
@@ -102,6 +105,7 @@ extern "C" {
 #   endif
 
 void dlt_client_register_message_callback(int (*registerd_callback)(DltMessage *message, void *data));
+void dlt_client_register_fetch_next_message_callback(bool (*registerd_callback)(void *data));
 
 /**
  * Initialising dlt client structure with a specific port
@@ -270,12 +274,28 @@ DltReturnValue dlt_client_send_reset_to_factory_default(DltClient *client);
 DltReturnValue dlt_client_setbaudrate(DltClient *client, int baudrate);
 
 /**
+ * Set mode within dlt client structure
+ * @param client pointer to dlt client structure
+ * @param mode DltClientMode
+ * @return Value from DltReturnValue enum
+ */
+DltReturnValue dlt_client_set_mode(DltClient *client, DltClientMode mode);
+
+/**
  * Set server ip
  * @param client pointer to dlt client structure
  * @param ipaddr pointer to command line argument
  * @return negative value if there was an error
  */
 int dlt_client_set_server_ip(DltClient *client, char *ipaddr);
+
+/**
+ * Set server UDP host receiver interface address
+ * @param client pointer to dlt client structure
+ * @param hostip pointer to multicast group address
+ * @return negative value if there was an error
+ */
+int dlt_client_set_host_if_address(DltClient *client, char *hostip);
 
 /**
  * Set serial device

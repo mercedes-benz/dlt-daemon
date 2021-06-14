@@ -394,7 +394,7 @@ int test2m(void)
     DLT_LOG(context_macro_test[1], DLT_LOG_INFO, DLT_STRING("float64"), DLT_FLOAT64(DBL_MIN), DLT_FLOAT64(DBL_MAX));
 
     for (num2 = 0; num2 < 10; num2++)
-        buffer[num2] = num2;
+        buffer[num2] = (char) num2;
 
     DLT_LOG(context_macro_test[1], DLT_LOG_INFO, DLT_STRING("raw"), DLT_RAW(buffer, 10));
 
@@ -443,7 +443,7 @@ int test3m(void)
                DLT_FLOAT64(DBL_MAX));
 
     for (num2 = 0; num2 < 10; num2++)
-        buffer[num2] = num2;
+        buffer[num2] = (char) num2;
 
     DLT_LOG_ID(context_macro_test[2], DLT_LOG_INFO, 14, DLT_STRING("raw"), DLT_RAW(buffer, 10));
 
@@ -462,7 +462,7 @@ int test4m(void)
     int num;
 
     for (num = 0; num < 1024; num++)
-        buffer[num] = num;
+        buffer[num] = (char) num;
 
     /* Test 4: (Macro IF) Message size test */
     printf("Test4m: (Macro IF) Test different message sizes\n");
@@ -489,7 +489,7 @@ int test5m(void)
     void *ptr = malloc(sizeof(int));
 
     for (num = 0; num < 32; num++)
-        buffer[num] = num;
+        buffer[num] = (char) num;
 
     /* Test 5: (Macro IF) Test high-level API */
     printf("Test5m: (Macro IF) Test high-level API\n");
@@ -560,11 +560,12 @@ int test6m(void)
 
 int test7m(void)
 {
+#ifdef DLT_NETWORK_TRACE_ENABLE
     char buffer[32];
     int num;
 
     for (num = 0; num < 32; num++)
-        buffer[num] = num;
+        buffer[num] = (char) num;
 
     /* Show all log messages and traces */
     DLT_SET_APPLICATION_LL_TS_LIMIT(DLT_LOG_VERBOSE, DLT_TRACE_STATUS_ON);
@@ -585,17 +586,23 @@ int test7m(void)
 
     DLT_SET_APPLICATION_LL_TS_LIMIT(DLT_LOG_DEFAULT, DLT_TRACE_STATUS_DEFAULT);
     sleep(2);
+#else
+    /* Test 7: (Macro IF) Test network trace */
+    printf("Test7m: (Macro IF) Test network trace: Network trace interface is not supported, skipping\n");
+    DLT_LOG_STRING(context_info, DLT_LOG_INFO, "Test 7: (Macro IF) Test network trace: Network trace interface is not supported, skipping");
+#endif
 
     return 0;
 }
 
 int test8m(void)
 {
+#ifdef DLT_NETWORK_TRACE_ENABLE
     char buffer[1024 * 5];
     int num;
 
     for (num = 0; num < 1024 * 5; num++)
-        buffer[num] = num;
+        buffer[num] = (char) num;
 
     /* Show all log messages and traces */
     DLT_SET_APPLICATION_LL_TS_LIMIT(DLT_LOG_VERBOSE, DLT_TRACE_STATUS_ON);
@@ -616,17 +623,23 @@ int test8m(void)
 
     DLT_SET_APPLICATION_LL_TS_LIMIT(DLT_LOG_DEFAULT, DLT_TRACE_STATUS_DEFAULT);
     sleep(2);
+#else
+    /* Test 8: (Macro IF) Test truncated network trace*/
+    printf("Test8m: (Macro IF) Test truncated network trace: Network trace interface is not supported, skipping\n");
+    DLT_LOG_STRING(context_info, DLT_LOG_INFO, "Test 8: (Macro IF) Test truncated network trace: Network trace interface is not supported, skipping");
+#endif
 
     return 0;
 }
 
 int test9m(void)
 {
+#ifdef DLT_NETWORK_TRACE_ENABLE
     char buffer[1024 * 5];
     int num;
 
     for (num = 0; num < 1024 * 5; num++)
-        buffer[num] = num;
+        buffer[num] = (char) num;
 
     /* Show all log messages and traces */
     DLT_SET_APPLICATION_LL_TS_LIMIT(DLT_LOG_VERBOSE, DLT_TRACE_STATUS_ON);
@@ -647,6 +660,11 @@ int test9m(void)
 
     DLT_SET_APPLICATION_LL_TS_LIMIT(DLT_LOG_DEFAULT, DLT_TRACE_STATUS_DEFAULT);
     sleep(2);
+#else
+    /* Test 9: (Macro IF) Test segmented network trace*/
+    printf("Test9m: (Macro IF) Test segmented  network trace: Network trace interface is not supported, skipping\n");
+    DLT_LOG_STRING(context_info, DLT_LOG_INFO, "Test 9: (Macro IF) Test segmented network trace: Network trace interface is not supported, skipping");
+#endif
 
     return 0;
 }
@@ -824,7 +842,7 @@ int test2f(void)
     }
 
     for (num2 = 0; num2 < 10; num2++)
-        buffer[num2] = num2;
+        buffer[num2] = (char) num2;
 
     if (dlt_user_log_write_start(&(context_function_test[1]), &context_data, DLT_LOG_INFO) > 0) {
         dlt_user_log_write_string(&context_data, "raw");
@@ -939,7 +957,7 @@ int test3f(void)
     }
 
     for (num2 = 0; num2 < 10; num2++)
-        buffer[num2] = num2;
+        buffer[num2] = (char) num2;
 
     if (dlt_user_log_write_start_id(&(context_function_test[2]), &context_data, DLT_LOG_INFO, 14) > 0) {
         dlt_user_log_write_string(&context_data, "raw");
@@ -966,7 +984,7 @@ int test4f(void)
     int num;
 
     for (num = 0; num < 1024; num++)
-        buffer[num] = num;
+        buffer[num] = (char) num;
 
     /* Test 4: (Function IF) Message size test */
     printf("Test4f: (Function IF) Test different message sizes\n");
@@ -1019,7 +1037,7 @@ int test5f(void)
     char log[DLT_USER_BUF_MAX_SIZE];
 
     for (num = 0; num < 32; num++)
-        buffer[num] = num;
+        buffer[num] = (char) num;
 
     /* Test 5: (Function IF) Test high-level API */
     printf("Test5f: (Function IF) Test high-level API\n");
@@ -1100,11 +1118,12 @@ int test6f(void)
 
 int test7f(void)
 {
+#ifdef DLT_NETWORK_TRACE_ENABLE
     char buffer[32];
     int num;
 
     for (num = 0; num < 32; num++)
-        buffer[num] = num;
+        buffer[num] = (char) num;
 
     /* Show all log messages and traces */
     dlt_set_application_ll_ts_limit(DLT_LOG_VERBOSE, DLT_TRACE_STATUS_ON);
@@ -1133,17 +1152,27 @@ int test7f(void)
 
     dlt_set_application_ll_ts_limit(DLT_LOG_DEFAULT, DLT_TRACE_STATUS_DEFAULT);
     sleep(2);
+#else
+    /* Test 7: (Function IF) Test network trace */
+    printf("Test7f: (Function IF) Test network trace: Network trace interface is not supported, skipping\n");
+
+    if (dlt_user_log_write_start(&context_info, &context_data, DLT_LOG_INFO) > 0) {
+        dlt_user_log_write_string(&context_data, "Test 7: (Function IF) Test network trace: Network trace interface is not supported, skipping");
+        dlt_user_log_write_finish(&context_data);
+    }
+#endif
 
     return 0;
 }
 
 int test8f(void)
 {
+#ifdef DLT_NETWORK_TRACE_ENABLE
     char buffer[1024 * 5];
     int num;
 
     for (num = 0; num < 1024 * 5; num++)
-        buffer[num] = num;
+        buffer[num] = (char) num;
 
     /* Show all log messages and traces */
     dlt_set_application_ll_ts_limit(DLT_LOG_VERBOSE, DLT_TRACE_STATUS_ON);
@@ -1173,17 +1202,27 @@ int test8f(void)
 
     dlt_set_application_ll_ts_limit(DLT_LOG_DEFAULT, DLT_TRACE_STATUS_DEFAULT);
     sleep(2);
+#else
+    /* Test 8: (Function IF) Test truncated network trace */
+    printf("Test8f: (Function IF) Test truncated network trace: Network trace interface is not supported, skipping\n");
+
+    if (dlt_user_log_write_start(&context_info, &context_data, DLT_LOG_INFO) > 0) {
+        dlt_user_log_write_string(&context_data, "Test 8: (Function IF) Test truncated network trace: Network trace interface is not supported, skipping");
+        dlt_user_log_write_finish(&context_data);
+    }
+#endif
 
     return 0;
 }
 
 int test9f(void)
 {
+#ifdef DLT_NETWORK_TRACE_ENABLE
     char buffer[1024 * 5];
     int num;
 
     for (num = 0; num < 1024 * 5; num++)
-        buffer[num] = num;
+        buffer[num] = (char) num;
 
     /* Show all log messages and traces */
     dlt_set_application_ll_ts_limit(DLT_LOG_VERBOSE, DLT_TRACE_STATUS_ON);
@@ -1212,6 +1251,15 @@ int test9f(void)
 
     dlt_set_application_ll_ts_limit(DLT_LOG_DEFAULT, DLT_TRACE_STATUS_DEFAULT);
     sleep(2);
+#else
+    /* Test 9: (Function IF) Test segmented network trace */
+    printf("Test9f: (Function IF) Test segmented network trace: Network trace interface is not supported, skipping\n");
+
+    if (dlt_user_log_write_start(&context_info, &context_data, DLT_LOG_INFO) > 0) {
+        dlt_user_log_write_string(&context_data, "Test 9: (Function IF) Test segmented network trace: Network trace interface is not supported, skipping");
+        dlt_user_log_write_finish(&context_data);
+    }
+#endif
 
     return 0;
 }
@@ -1270,7 +1318,7 @@ int test_injection_macro_callback(uint32_t service_id, void *data, uint32_t leng
     memset(text, 0, 1024);
 
     if (length > 0) {
-        dlt_print_mixed_string(text, 1024, data, length, 0);
+        dlt_print_mixed_string(text, 1024, data, (int) length, 0);
         printf("%s \n", text);
     }
 
@@ -1290,7 +1338,7 @@ int test_injection_function_callback(uint32_t service_id, void *data, uint32_t l
     memset(text, 0, 1024);
 
     if (length > 0) {
-        dlt_print_mixed_string(text, 1024, data, length, 0);
+        dlt_print_mixed_string(text, 1024, data, (int) length, 0);
         printf("%s \n", text);
     }
 

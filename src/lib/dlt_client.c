@@ -97,10 +97,16 @@
 #include "dlt_client_cfg.h"
 
 static int (*message_callback_function)(DltMessage *message, void *data) = NULL;
+static bool (*fetch_next_message_callback_function)(void *data) = NULL;
 
 void dlt_client_register_message_callback(int (*registerd_callback)(DltMessage *message, void *data))
 {
     message_callback_function = registerd_callback;
+}
+
+void dlt_client_register_fetch_next_message_callback(bool (*registerd_callback)(void *data))
+{
+    fetch_next_message_callback_function = registerd_callback;
 }
 
 DltReturnValue dlt_client_init_port(DltClient *client, int port, int verbose)
@@ -121,6 +127,7 @@ DltReturnValue dlt_client_init_port(DltClient *client, int port, int verbose)
     client->receiver.buffer = NULL;
     client->receiver.buf = NULL;
     client->receiver.backup_buf = NULL;
+    client->hostip = NULL;
 
     return DLT_RETURN_OK;
 }
@@ -153,16 +160,20 @@ DltReturnValue dlt_client_init(DltClient *client, int verbose)
         dlt_vlog(LOG_INFO,
                  "Init dlt client struct with default port: %hu.\n",
                  servPort);
-
     return dlt_client_init_port(client, servPort, verbose);
 }
 
 DltReturnValue dlt_client_connect(DltClient *client, int verbose)
 {
+    const int yes = 1;
+    int connect_errno = 0;
     char portnumbuffer[33];
     struct addrinfo hints, *servinfo, *p;
     struct sockaddr_un addr;
     int rv;
+    struct ip_mreq mreq;
+    DltReceiverType receiver_type = DLT_RECEIVE_FD;
+
     memset(&hints, 0, sizeof(hints));
     hints.ai_socktype = SOCK_STREAM;
 
@@ -185,9 +196,8 @@ DltReturnValue dlt_client_connect(DltClient *client, int verbose)
             }
 
             if (connect(client->sock, p->ai_addr, p->ai_addrlen) < 0) {
+                connect_errno = errno;
                 close(client->sock);
-                dlt_vlog(LOG_WARNING, "connect() failed! %s\n",
-                         strerror(errno));
                 continue;
             }
 
@@ -197,12 +207,14 @@ DltReturnValue dlt_client_connect(DltClient *client, int verbose)
         freeaddrinfo(servinfo);
 
         if (p == NULL) {
-            dlt_log(LOG_ERR, "ERROR: failed to connect.\n");
+            dlt_vlog(LOG_ERR, "ERROR: failed to connect! %s\n", strerror(connect_errno));
             return DLT_RETURN_ERROR;
         }
 
         if (verbose)
             printf("Connected to DLT daemon (%s)\n", client->servIP);
+
+        receiver_type = DLT_RECEIVE_SOCKET;
 
         break;
     case DLT_CLIENT_MODE_SERIAL:
@@ -240,6 +252,8 @@ DltReturnValue dlt_client_connect(DltClient *client, int verbose)
         if (verbose)
             printf("Connected to %s\n", client->serialDevice);
 
+        receiver_type = DLT_RECEIVE_FD;
+
         break;
     case DLT_CLIENT_MODE_UNIX:
 
@@ -265,6 +279,62 @@ DltReturnValue dlt_client_connect(DltClient *client, int verbose)
             return DLT_RETURN_ERROR;
         }
 
+        receiver_type = DLT_RECEIVE_SOCKET;
+
+        break;
+    case DLT_CLIENT_MODE_UDP_MULTICAST:
+
+        if ((client->sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+        {
+            fprintf(stderr, "ERROR: socket error: %s\n", strerror(errno));
+            return DLT_RETURN_ERROR;
+        }
+
+        /* allow multiple sockets to use the same PORT number */
+        if (setsockopt(client->sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
+        {
+            fprintf(stderr, "ERROR: Reusing address failed: %s\n", strerror(errno));
+            return DLT_RETURN_ERROR;
+        }
+
+        memset(&client->receiver.addr, 0, sizeof(client->receiver.addr));
+        client->receiver.addr.sin_family = AF_INET;
+        client->receiver.addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        client->receiver.addr.sin_port = htons(client->port);
+
+        /* bind to receive address */
+        if (bind(client->sock, (struct sockaddr*) &client->receiver.addr, sizeof(client->receiver.addr)) < 0)
+        {
+            fprintf(stderr, "ERROR: bind failed: %s\n", strerror(errno));
+            return DLT_RETURN_ERROR;
+        }
+
+        mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+        if (client->hostip)
+        {
+            mreq.imr_interface.s_addr = inet_addr(client->hostip);
+        }
+        if (client->servIP == NULL)
+        {
+            fprintf(stderr, "ERROR: server address not set\n");
+            return DLT_RETURN_ERROR;
+        }
+
+        mreq.imr_multiaddr.s_addr = inet_addr(client->servIP);
+        if (mreq.imr_multiaddr.s_addr == (in_addr_t)-1)
+        {
+            fprintf(stderr, "ERROR: server address not not valid %s\n", client->servIP);
+            return DLT_RETURN_ERROR;
+        }
+
+        if (setsockopt(client->sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq)) < 0)
+        {
+            fprintf(stderr, "ERROR: setsockopt add membership failed: %s\n", strerror(errno));
+            return DLT_RETURN_ERROR;
+        }
+
+        receiver_type = DLT_RECEIVE_UDP_SOCKET;
+
         break;
     default:
 
@@ -274,7 +344,7 @@ DltReturnValue dlt_client_connect(DltClient *client, int verbose)
         return DLT_RETURN_ERROR;
     }
 
-    if (dlt_receiver_init(&(client->receiver), client->sock, DLT_RECEIVE_BUFSIZE) != DLT_RETURN_OK) {
+    if (dlt_receiver_init(&(client->receiver), client->sock, receiver_type, DLT_RECEIVE_BUFSIZE) != DLT_RETURN_OK) {
         fprintf(stderr, "ERROR initializing receiver\n");
         return DLT_RETURN_ERROR;
     }
@@ -315,6 +385,10 @@ DltReturnValue dlt_client_cleanup(DltClient *client, int verbose)
         client->socketPath = NULL;
     }
 
+    if (client->hostip) {
+        free(client->hostip);
+        client->hostip = NULL;
+    }
     return ret;
 }
 
@@ -329,9 +403,10 @@ DltReturnValue dlt_client_main_loop(DltClient *client, void *data, int verbose)
     if (dlt_message_init(&msg, verbose) == DLT_RETURN_ERROR)
         return DLT_RETURN_ERROR;
 
-    while (1) {
+    bool fetch_next_message = true;
+    while (fetch_next_message) {
         /* wait for data from socket or serial connection */
-        ret = dlt_receiver_receive(&(client->receiver), client->mode);
+        ret = dlt_receiver_receive(&(client->receiver));
 
         if (ret <= 0) {
             /* No more data to be received */
@@ -341,7 +416,8 @@ DltReturnValue dlt_client_main_loop(DltClient *client, void *data, int verbose)
             return DLT_RETURN_TRUE;
         }
 
-        while (dlt_message_read(&msg, (unsigned char *)(client->receiver.buf), client->receiver.bytesRcvd, 0,
+        while (dlt_message_read(&msg, (unsigned char *)(client->receiver.buf),
+                                (unsigned int) client->receiver.bytesRcvd, 0,
                                 verbose) == DLT_MESSAGE_ERROR_OK) {
             /* Call callback function */
             if (message_callback_function)
@@ -349,8 +425,8 @@ DltReturnValue dlt_client_main_loop(DltClient *client, void *data, int verbose)
 
             if (msg.found_serialheader) {
                 if (dlt_receiver_remove(&(client->receiver),
-                                        msg.headersize + msg.datasize - sizeof(DltStorageHeader) +
-                                        sizeof(dltSerialHeader)) ==
+                                        (int) (msg.headersize + msg.datasize - sizeof(DltStorageHeader) +
+                                        sizeof(dltSerialHeader))) ==
                     DLT_RETURN_ERROR) {
                     /* Return value ignored */
                     dlt_message_free(&msg, verbose);
@@ -358,7 +434,7 @@ DltReturnValue dlt_client_main_loop(DltClient *client, void *data, int verbose)
                 }
             }
             else if (dlt_receiver_remove(&(client->receiver),
-                                         msg.headersize + msg.datasize - sizeof(DltStorageHeader)) ==
+                                         (int) (msg.headersize + msg.datasize - sizeof(DltStorageHeader))) ==
                      DLT_RETURN_ERROR) {
                 /* Return value ignored */
                 dlt_message_free(&msg, verbose);
@@ -371,6 +447,8 @@ DltReturnValue dlt_client_main_loop(DltClient *client, void *data, int verbose)
             dlt_message_free(&msg, verbose);
             return DLT_RETURN_ERROR;
         }
+        if (fetch_next_message_callback_function)
+          fetch_next_message = (*fetch_next_message_callback_function)(data);
     }
 
     if (dlt_message_free(&msg, verbose) == DLT_RETURN_ERROR)
@@ -459,12 +537,12 @@ DltReturnValue dlt_client_send_ctrl_msg(DltClient *client, char *apid, char *cti
     dlt_set_id(msg.extendedheader->ctid, (ctid[0] == '\0') ? DLT_CLIENT_DUMMY_CON_ID : ctid);
 
     /* prepare length information */
-    msg.headersize = sizeof(DltStorageHeader) +
+    msg.headersize = (uint32_t) (sizeof(DltStorageHeader) +
         sizeof(DltStandardHeader) +
         sizeof(DltExtendedHeader) +
-        DLT_STANDARD_HEADER_EXTRA_SIZE(msg.standardheader->htyp);
+        DLT_STANDARD_HEADER_EXTRA_SIZE(msg.standardheader->htyp));
 
-    len = msg.headersize - sizeof(DltStorageHeader) + msg.datasize;
+    len = (int32_t) (msg.headersize - sizeof(DltStorageHeader) + msg.datasize);
 
     if (len > UINT16_MAX) {
         fprintf(stderr, "Critical: Huge injection message discarded!\n");
@@ -479,7 +557,7 @@ DltReturnValue dlt_client_send_ctrl_msg(DltClient *client, char *apid, char *cti
     if ((client->mode == DLT_CLIENT_MODE_TCP) || (client->mode == DLT_CLIENT_MODE_SERIAL)) {
         /* via FileDescriptor */
         ret =
-            write(client->sock, msg.headerbuffer + sizeof(DltStorageHeader), msg.headersize - sizeof(DltStorageHeader));
+            (int) write(client->sock, msg.headerbuffer + sizeof(DltStorageHeader), msg.headersize - sizeof(DltStorageHeader));
 
         if (0 > ret) {
             dlt_log(LOG_ERR, "Sending message failed\n");
@@ -487,7 +565,7 @@ DltReturnValue dlt_client_send_ctrl_msg(DltClient *client, char *apid, char *cti
             return DLT_RETURN_ERROR;
         }
 
-        ret = write(client->sock, msg.databuffer, msg.datasize);
+        ret = (int) write(client->sock, msg.databuffer, msg.datasize);
 
         if (0 > ret) {
             dlt_log(LOG_ERR, "Sending message failed\n");
@@ -533,14 +611,14 @@ DltReturnValue dlt_client_send_inject_msg(DltClient *client,
 
     offset = 0;
     memcpy(payload, &serviceID, sizeof(serviceID));
-    offset += sizeof(uint32_t);
+    offset += (int) sizeof(uint32_t);
     memcpy(payload + offset, &size, sizeof(size));
-    offset += sizeof(uint32_t);
+    offset += (int) sizeof(uint32_t);
     memcpy(payload + offset, buffer, size);
 
     /* free message */
     if (dlt_client_send_ctrl_msg(client, apid, ctid, payload,
-                                 sizeof(uint32_t) + sizeof(uint32_t) + size) == DLT_RETURN_ERROR) {
+                                 (uint32_t) (sizeof(uint32_t) + sizeof(uint32_t) + size)) == DLT_RETURN_ERROR) {
         free(payload);
         return DLT_RETURN_ERROR;
     }
@@ -875,12 +953,34 @@ DltReturnValue dlt_client_setbaudrate(DltClient *client, int baudrate)
     return DLT_RETURN_OK;
 }
 
+DltReturnValue dlt_client_set_mode(DltClient *client, DltClientMode mode)
+{
+    if (client == 0)
+        return DLT_RETURN_ERROR;
+
+    client->mode = mode;
+    return DLT_RETURN_OK;
+
+}
+
 int dlt_client_set_server_ip(DltClient *client, char *ipaddr)
 {
     client->servIP = strdup(ipaddr);
 
     if (client->servIP == NULL) {
         dlt_log(LOG_ERR, "ERROR: failed to duplicate server IP\n");
+        return DLT_RETURN_ERROR;
+    }
+
+    return DLT_RETURN_OK;
+}
+
+int dlt_client_set_host_if_address(DltClient *client, char *hostip)
+{
+    client->hostip = strdup(hostip);
+
+    if (client->hostip == NULL) {
+        dlt_log(LOG_ERR, "ERROR: failed to duplicate UDP interface address\n");
         return DLT_RETURN_ERROR;
     }
 
@@ -1004,7 +1104,7 @@ DltReturnValue dlt_client_parse_get_log_info_resp_text(DltServiceGetLogInfoRespo
     }
 
     /* count_app_ids */
-    resp->log_info_type.count_app_ids = dlt_getloginfo_conv_ascii_to_uint16_t(rp,
+    resp->log_info_type.count_app_ids = (uint16_t) dlt_getloginfo_conv_ascii_to_uint16_t(rp,
                                                                               &rp_count);
 
     resp->log_info_type.app_ids = (AppIDsType *)calloc
@@ -1022,7 +1122,7 @@ DltReturnValue dlt_client_parse_get_log_info_resp_text(DltServiceGetLogInfoRespo
         dlt_getloginfo_conv_ascii_to_id(rp, &rp_count, app->app_id, DLT_ID_SIZE);
 
         /* count_con_ids */
-        app->count_context_ids = dlt_getloginfo_conv_ascii_to_uint16_t(rp,
+        app->count_context_ids = (uint16_t) dlt_getloginfo_conv_ascii_to_uint16_t(rp,
                                                                        &rp_count);
 
         app->context_id_info = (ContextIDsInfoType *)calloc
@@ -1055,10 +1155,10 @@ DltReturnValue dlt_client_parse_get_log_info_resp_text(DltServiceGetLogInfoRespo
 
             /* context desc */
             if (resp->status == 7) {
-                con->len_context_description = dlt_getloginfo_conv_ascii_to_uint16_t(rp,
+                con->len_context_description = (uint16_t) dlt_getloginfo_conv_ascii_to_uint16_t(rp,
                                                                                      &rp_count);
                 con->context_description = (char *)calloc
-                        (con->len_context_description + 1, sizeof(char));
+                        ((size_t) (con->len_context_description + 1), sizeof(char));
 
                 if (con->context_description == 0) {
                     dlt_log(LOG_ERR, "calloc failed for context description\n");
@@ -1075,10 +1175,10 @@ DltReturnValue dlt_client_parse_get_log_info_resp_text(DltServiceGetLogInfoRespo
 
         /* application desc */
         if (resp->status == 7) {
-            app->len_app_description = dlt_getloginfo_conv_ascii_to_uint16_t(rp,
+            app->len_app_description = (uint16_t) dlt_getloginfo_conv_ascii_to_uint16_t(rp,
                                                                              &rp_count);
             app->app_description = (char *)calloc
-                    (app->len_app_description + 1, sizeof(char));
+                    ((size_t) (app->len_app_description + 1), sizeof(char));
 
             if (app->app_description == 0) {
                 dlt_log(LOG_ERR, "calloc failed for application description\n");

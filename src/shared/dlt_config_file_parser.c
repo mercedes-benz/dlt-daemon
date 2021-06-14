@@ -288,17 +288,21 @@ static int dlt_config_file_get_key_value(char *line, char *str1, char *str2)
 
     ptr = strtok_r(line, delimiter, &save_ptr);
 
-    if (ptr != NULL) /* get key */
-        strncpy(str1, ptr, DLT_CONFIG_FILE_ENTRY_MAX_LEN);
-    else
+    if (ptr != NULL) { /* get key */
+        strncpy(str1, ptr, DLT_CONFIG_FILE_ENTRY_MAX_LEN - 1);
+        str1[DLT_CONFIG_FILE_ENTRY_MAX_LEN - 1] = '\0';
+    } else {
         return -1;
+    }
 
     ptr = strtok_r(NULL, delimiter, &save_ptr);
 
-    if (ptr != NULL)
-        strncpy(str2, ptr, DLT_CONFIG_FILE_ENTRY_MAX_LEN);
-    else
+    if (ptr != NULL) {
+        strncpy(str2, ptr, DLT_CONFIG_FILE_ENTRY_MAX_LEN - 1);
+        str2[DLT_CONFIG_FILE_ENTRY_MAX_LEN - 1] = '\0';
+    } else {
         return -1;
+    }
 
     return 0;
 }
@@ -500,6 +504,10 @@ int dlt_config_file_get_num_sections(const DltConfigFile *file, int *num)
     if ((file == NULL) || (file->num_sections < 0))
         return -1;
 
+    /*
+     * Note: Since General section could be used in configuration file,
+     * this number could be also containing General section.
+     */
     *num = file->num_sections;
 
     return 0;
@@ -540,4 +548,19 @@ int dlt_config_file_get_value(const DltConfigFile *file,
 
     dlt_vlog(LOG_WARNING, "Entry does not exist in section: %s\n", key);
     return -1;
+}
+
+int dlt_config_file_check_section_name_exists(const DltConfigFile *file,
+                                             const char *name)
+{
+    int ret = 0;
+
+    if ((file == NULL) || (file->num_sections <= 0) || (name == NULL))
+        return -1;
+
+    ret = dlt_config_file_find_section(file, name);
+    if (ret == -1)
+        return ret;
+
+    return 0;
 }
