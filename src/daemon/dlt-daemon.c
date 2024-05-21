@@ -83,6 +83,33 @@
 #   include "sd-daemon.h"
 #endif
 
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+#include <errno.h>
+#include <sys/neutrino.h>
+#include <sys/types.h>
+#include <sys/iofunc.h>
+#include <sys/dispatch.h>
+#include <sys/procmgr.h>
+
+static pthread_t message_thread_handle;
+bool work_in_progress = true;
+
+struct msg_thread_arg {
+    DltDaemon* daemon;
+    DltDaemonLocal* daemon_local;
+};
+
+void* msg_thread(void* arg);
+
+struct extattr {
+    iofunc_attr_t    attr;
+    DltReceiver      *receiver;
+};
+
+#define IOFUNC_ATTR_T       struct extattr
+pthread_mutex_t  msg_thread_lock;
+#endif
+
 /**
  * \defgroup daemon DLT Daemon
  * \addtogroup daemon
@@ -348,7 +375,7 @@ int option_file_parser(DltDaemonLocal *daemon_local)
     char value[value_length];
     char *pch;
     const char *filename;
-    ssize_t n;
+    ssize_t n = 0;
 
     /* set default values for configuration */
     daemon_local->flags.sharedMemorySize = DLT_SHM_SIZE;
@@ -364,7 +391,7 @@ int option_file_parser(DltDaemonLocal *daemon_local)
     n = snprintf(daemon_local->flags.loggingFilename,
                  sizeof(daemon_local->flags.loggingFilename),
                  "%s/dlt.log", DLT_USER_IPC_PATH);
-#else /* DLT_DAEMON_USE_FIFO_IPC */
+#elif defined DLT_DAEMON_USE_FIFO_IPC
     n = snprintf(daemon_local->flags.loggingFilename,
                  sizeof(daemon_local->flags.loggingFilename),
                  "%s/dlt.log", dltFifoBaseDir);
@@ -407,7 +434,7 @@ int option_file_parser(DltDaemonLocal *daemon_local)
         fprintf(stderr, "Provided path too long...trimming it to path[%s]\n",
                 daemon_local->flags.appSockPath);
 
-#else /* DLT_DAEMON_USE_FIFO_IPC */
+#elif defined DLT_DAEMON_USE_FIFO_IPC
     memset(daemon_local->flags.daemonFifoGroup, 0, sizeof(daemon_local->flags.daemonFifoGroup));
 #endif
     daemon_local->flags.gatewayMode = 0;
@@ -1123,6 +1150,7 @@ static DltReturnValue dlt_daemon_create_pipes_dir(char *dir)
 }
 #endif
 
+
 /**
  * Main function of tool.
  */
@@ -1194,12 +1222,11 @@ int main(int argc, char *argv[])
         return -1;
   }
 
-#else
+#elif defined DLT_DAEMON_USE_UNIX_SOCKET_IPC
     if (dlt_mkdir_recursive(DLT_USER_IPC_PATH) != 0) {
         dlt_vlog(LOG_ERR, "Base dir %s cannot be created!\n", daemon_local.flags.appSockPath);
         return -1;
     }
-
 #endif
 
     /* --- Daemon init phase 1 begin --- */
@@ -1330,6 +1357,12 @@ int main(int argc, char *argv[])
                             "Daemon launched. Starting to output traces...",
                             daemon_local.flags.vflag);
 
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+    pthread_mutex_init(&msg_thread_lock, 0);
+    struct msg_thread_arg arg = {.daemon = &daemon, .daemon_local = &daemon_local};
+    pthread_create(&message_thread_handle, NULL, msg_thread, &arg);
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
+
     /* Even handling loop. */
     while ((back >= 0) && (g_exit >= 0))
         back = dlt_daemon_handle_event(&daemon_local.pEvent,
@@ -1349,6 +1382,11 @@ int main(int argc, char *argv[])
 #endif
 
     dlt_gateway_deinit(&daemon_local.pGateway, daemon_local.flags.vflag);
+
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+    work_in_progress = false;
+    pthread_join(message_thread_handle,NULL);
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
     dlt_daemon_free(&daemon, daemon_local.flags.vflag);
 
@@ -1824,7 +1862,7 @@ int dlt_daemon_local_connection_init(DltDaemon *daemon,
         return DLT_RETURN_ERROR;
     }
 
-#else /* DLT_DAEMON_USE_FIFO_IPC */
+#elif defined DLT_DAEMON_USE_FIFO_IPC
 
     if (dlt_daemon_init_fifo(daemon_local)) {
         dlt_log(LOG_ERR, "Unable to initialize fifo.\n");
@@ -2081,7 +2119,7 @@ void dlt_daemon_local_cleanup(DltDaemon *daemon, DltDaemonLocal *daemon_local, i
 #ifdef DLT_DAEMON_USE_FIFO_IPC
     /* Try to delete existing pipe, ignore result of unlink() */
     unlink(daemon_local->flags.daemonFifoName);
-#else /* DLT_DAEMON_USE_UNIX_SOCKET_IPC */
+#elif defined DLT_DAEMON_USE_UNIX_SOCKET_IPC
     /* Try to delete existing pipe, ignore result of unlink() */
     if (unlink(daemon_local->flags.appSockPath) != 0) {
         dlt_vlog(LOG_WARNING, "%s: unlink() failed: %s\n",
@@ -2192,12 +2230,18 @@ void dlt_daemon_cleanup_timers()
 
 void dlt_daemon_daemonize(int verbose)
 {
-    int i;
-    int fd;
-
     PRINT_FUNCTION_VERBOSE(verbose);
 
     dlt_log(LOG_NOTICE, "Daemon mode\n");
+
+#ifdef __QNX__
+    if (procmgr_daemon(EOK, PROCMGR_DAEMON_NOCLOSE) == -1) {
+        dlt_log(LOG_CRIT, "procmgr_daemon to fork(), exiting DLT daemon\n");
+        exit(-1); /* fork error */
+    }
+#else
+    int i;
+    int fd;
 
     /* Daemonize */
     i = fork();
@@ -2251,7 +2295,7 @@ void dlt_daemon_daemonize(int verbose)
     signal(SIGTSTP, SIG_IGN); /* ignore tty signals */
     signal(SIGTTOU, SIG_IGN);
     signal(SIGTTIN, SIG_IGN);
-
+#endif
 } /* dlt_daemon_daemonize() */
 
 /* This function logs str to the configured output sink (socket, serial, offline trace).
@@ -3994,6 +4038,259 @@ int dlt_daemon_close_socket(int sock, DltDaemon *daemon, DltDaemonLocal *daemon_
 
     return 0;
 }
+
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+
+extern char *app_recv_buffer;
+
+int dlt_daemon_call_process_user_func(DltReceiver *receiver)
+{
+    int32_t min_size = (int32_t) sizeof(DltUserHeader);
+    bool run_loop = true;
+    int offset = 0;
+    DltUserHeader *userheader;
+    DltDaemon *daemon = receiver->daemon;
+    DltDaemonLocal *daemon_local = receiver->daemon_local;
+
+    /* look through buffer as long as data is in there */
+    while ((receiver->bytesRcvd >= min_size) && run_loop) {
+        dlt_daemon_process_user_message_func func = NULL;
+
+        offset = 0;
+        userheader = (DltUserHeader *)(receiver->buf + offset);
+
+        while (!dlt_user_check_userheader(userheader) &&
+               (offset + min_size <= receiver->bytesRcvd)) {
+            /* resync if necessary */
+            offset++;
+            userheader = (DltUserHeader *)(receiver->buf + offset);
+        }
+
+        /* Check for user header pattern */
+        if (!dlt_user_check_userheader(userheader))
+            break;
+
+        /* Set new start offset */
+        if (offset > 0)
+            dlt_receiver_remove(receiver, offset);
+
+        if (userheader->message >= DLT_USER_MESSAGE_NOT_SUPPORTED)
+            func = dlt_daemon_process_user_message_not_sup;
+        else
+            func = process_user_func[userheader->message];
+
+        if (func(daemon,
+                 daemon_local,
+                 receiver,
+                 daemon_local->flags.vflag) == -1)
+            run_loop = false;
+    }
+
+    /* keep not read data in buffer */
+    if (dlt_receiver_move_to_begin(receiver) == -1) {
+        dlt_log(LOG_WARNING,
+                "Can't move bytes to beginning of receiver buffer for user "
+                "messages\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+void* msg_thread(void* arg)
+{
+    struct msg_thread_arg *mtarg = (struct msg_thread_arg *)arg;
+    DltDaemon *daemon = mtarg->daemon;
+    DltDaemonLocal *daemon_local = mtarg->daemon_local;
+    dispatch_t           *dpp;
+    dispatch_context_t   *ctp;
+    DltReceiver *receiver;
+    struct timespec      time_out;
+    int                  timedout;
+    time_out.tv_sec = 1;
+    time_out.tv_nsec = 2;
+
+    if ((daemon == NULL) || (daemon_local == NULL)) {
+        dlt_log(LOG_ERR,
+                "Invalid function parameters used for function msg_thread()\n");
+        return NULL;
+    }
+
+    pthread_setname_np(pthread_self(), __func__);
+
+    if (dlt_resmgr_create(&dpp, &ctp, &receiver) != DLT_RETURN_OK) {
+        dlt_log(LOG_CRIT, "Could not create resource manager.\n");
+        return NULL;
+    }
+
+    receiver->ctp = ctp;
+    receiver->daemon = daemon;
+    receiver->daemon_local = daemon_local;
+    dlt_log(LOG_INFO, "Resource manager was inited successfuly.\n");
+
+    /* start the resource manager message loop */
+    while(work_in_progress) {
+        if ( (timedout = dispatch_timeout ( dpp, &time_out )) == -1 ) {
+            dlt_vlog(LOG_ERR, "Couldn't set timeout.\n");
+            return NULL;
+        }
+
+        if((ctp = dispatch_block(ctp)) == NULL) {
+            dlt_vlog(LOG_ERR, "dispatch_block() error\n");
+            return NULL;
+        }
+
+        dispatch_handler(ctp);
+    }
+
+    dlt_resmgr_free(receiver);
+    dispatch_context_free ( ctp );
+
+    if ( dispatch_destroy ( dpp ) == -1 ) {
+        dlt_vlog(LOG_ERR, "Dispatch wasn't destroyed.\n");
+        return NULL;
+    }
+
+    /* else dispatch was destroyed */
+    dlt_log(LOG_CRIT, "Resource manager was finished.\n");
+
+    return NULL;
+}
+
+static int io_write(resmgr_context_t *ctp, io_write_t *msg, iofunc_ocb_t *ocb)
+{
+    struct _xtype_offset *xoffset;
+    IOFUNC_ATTR_T        *attr = (IOFUNC_ATTR_T*)ocb->attr;
+
+    if (attr->receiver == NULL) {
+        dlt_log(LOG_WARNING,
+                "recource manager receiver was not inited\n");
+        return -1;
+    }
+
+    int status = iofunc_write_verify(ctp, msg, ocb, NULL);
+    if (status != EOK){
+        return (status);
+    }
+
+    // Check and Process Override
+    uint32_t xtype = msg->i.xtype & _IO_XTYPE_MASK;
+
+    if (xtype == _IO_XTYPE_OFFSET) {
+        xoffset = (struct _xtype_offset*)(&msg->i + 1);
+        attr->receiver->offset = sizeof(msg->i) + sizeof(*xoffset);
+    } else if (xtype == _IO_XTYPE_NONE) {
+        attr->receiver->offset = sizeof(msg->i);
+    } else {
+        return (ENOSYS);
+    }
+
+    /*
+    *  get the data from the sender's message buffer,
+    *  skipping all possible header information
+     */
+    int32_t res = dlt_receiver_receive(attr->receiver);
+    if (res <= 0) {
+        dlt_log(LOG_WARNING,
+                "dlt_receiver_receive() for messages from resource manager interface "
+                "failed!\n");
+        return -1;
+    }
+
+    // Set how many bytes the "write" client function should return
+    _IO_SET_WRITE_NBYTES(ctp, attr->receiver->nbytes);
+
+    // If data is written, update POSIX data structure and OCB offset
+    if (attr->receiver->nbytes) {
+        attr->attr.flags |= IOFUNC_ATTR_MTIME | IOFUNC_ATTR_DIRTY_TIME;
+        if (xtype == _IO_XTYPE_NONE) {
+            ocb->offset += attr->receiver->nbytes;
+        }
+    }
+
+    if (pthread_mutex_lock(&msg_thread_lock) == 0) {
+        dlt_daemon_call_process_user_func(attr->receiver);
+        pthread_mutex_unlock(&msg_thread_lock);
+    } else {
+        dlt_vlog(LOG_ERR, "%s: pthread_mutex_lock() failed: %s", __func__, strerror(errno));
+    }
+
+    return (_RESMGR_NPARTS (0));
+}
+
+DltReturnValue dlt_resmgr_create(dispatch_t **dpp, dispatch_context_t **ctp, DltReceiver **receiver)
+{
+    static resmgr_attr_t        resmgr_attr;
+    DltReceiver *ret = NULL;
+
+    static resmgr_connect_funcs_t    connect_funcs;
+    static resmgr_io_funcs_t         io_funcs;
+    static IOFUNC_ATTR_T             attr = {.receiver = NULL};
+
+    /* initialize dispatch interface */
+    *dpp = dispatch_create();
+    if (*dpp == NULL) {
+        dlt_vlog(LOG_ERR, "Unable to allocate dispatch handle for recourse manager.\n");
+        return DLT_RETURN_ERROR;
+    }
+
+    /* getting the receiver structure for messaging. */
+    ret = calloc(1, sizeof(DltReceiver));
+    if (ret) {
+        dlt_receiver_init_global_buffer(ret, -1, DLT_RECEIVE_MSG, &app_recv_buffer);
+        if (*receiver) {
+            free(*receiver);
+        }
+        *receiver = ret;
+        attr.receiver = ret;
+    } else {
+        dlt_vlog(LOG_CRIT, "%s: couldn't allocate receiver.\n", __func__);
+        return DLT_RETURN_ERROR;
+    }
+
+    /* initialize resource manager attributes */
+    memset(&resmgr_attr, 0, sizeof resmgr_attr);
+    resmgr_attr.nparts_max = 1;
+    resmgr_attr.msg_max_size = 2048;
+
+    /* initialize functions for handling messages */
+    iofunc_func_init(_RESMGR_CONNECT_NFUNCS, &connect_funcs,
+                     _RESMGR_IO_NFUNCS, &io_funcs);
+    io_funcs.write = io_write;
+    io_funcs.write64 = io_write;
+
+    /* initialize attribute structure used by the device */
+    iofunc_attr_init(&attr.attr, S_IFNAM | 0666, 0, 0);
+
+    /* attach our device name */
+    int id = resmgr_attach(
+        *dpp,
+        &resmgr_attr,
+        DLT_QNX_MESSAGE_IPC_CHANNEL_NAME,
+        _FTYPE_ANY,
+        0,
+        &connect_funcs,
+        &io_funcs,
+        &attr.attr);
+
+    if(id == -1) {
+        dlt_vlog(LOG_ERR, "Unable to attach name for recourse manager.\n");
+        return DLT_RETURN_ERROR;
+    }
+
+    /* allocate a context structure */
+    *ctp = dispatch_context_alloc(*dpp);
+
+    return DLT_RETURN_OK;
+}
+
+void dlt_resmgr_free(DltReceiver *receiver)
+{
+    dlt_receiver_free_global_buffer(receiver);
+    free(receiver);
+    receiver = NULL;
+}
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
 /**
  \}

@@ -138,6 +138,190 @@ extern "C" {
 
 static const char *STR_TRUNCATED_MESSAGE = "... <<Message truncated, too long>>";
 
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+#include <sys/netmgr.h>
+
+pthread_t   loophandle = 0;
+int dispatch_loop_command = 0;
+#define TERMINATIONCODE "!!EXIT!!TERMINATE!!"
+
+static int io_write(resmgr_context_t *ctp, io_write_t *msg, iofunc_ocb_t *ocb)
+{
+    // IOFUNC_ATTR_T        *attr = (IOFUNC_ATTR_T*)ocb->attr;
+    char                buffer[2048];
+    char                tc[] = TERMINATIONCODE;
+
+    int status = iofunc_write_verify(ctp, msg, ocb, NULL);
+    if (status != EOK){
+        return (status);
+    }
+
+    ssize_t nbytes = resmgr_msgread(ctp, buffer, sizeof(buffer), sizeof (msg -> i));
+
+    if (nbytes >= sizeof(tc)) {
+        if (memcmp(buffer, tc, sizeof(tc)) == 0) {
+            fprintf(stderr, "Ternination cmd received");
+            dispatch_loop_command = 1;
+        }
+    }
+
+    // Set how many bytes the "write" client function should return
+    _IO_SET_WRITE_NBYTES(ctp, msg -> i.nbytes);
+
+
+    return (_RESMGR_NPARTS (0));
+}
+
+DltReturnValue dlt_resmgr_create(dispatch_t **dpp, dispatch_context_t **ctp)
+{
+    static resmgr_attr_t        resmgr_attr;
+
+    static resmgr_connect_funcs_t    connect_funcs;
+    static resmgr_io_funcs_t         io_funcs;
+    static IOFUNC_ATTR_T             attr;
+
+    /* initialize dispatch interface */
+    *dpp = dispatch_create();
+    if (*dpp == NULL) {
+        fprintf(stderr, "Unable to allocate dispatch handle for recourse manager.\n");
+        return DLT_RETURN_ERROR;
+    }
+
+    /* initialize resource manager attributes */
+    memset(&resmgr_attr, 0, sizeof resmgr_attr);
+    resmgr_attr.nparts_max = 1;
+    resmgr_attr.msg_max_size = 2048;
+
+    /* initialize functions for handling messages */
+    iofunc_func_init(_RESMGR_CONNECT_NFUNCS, &connect_funcs,
+                     _RESMGR_IO_NFUNCS, &io_funcs);
+    io_funcs.write = io_write;
+    io_funcs.write64 = io_write;
+
+    /* initialize attribute structure used by the device */
+    iofunc_attr_init(&attr, S_IFNAM | 0666, 0, 0);
+
+    /* attach our device name */
+    int id = resmgr_attach(
+                *dpp,           /* dispatch handle        */
+                &resmgr_attr,   /* resource manager attrs */
+                DLT_QNX_MESSAGE_IPC_CHANNEL_NAME,  /* device name            */
+                _FTYPE_ANY,     /* open type              */
+                _RESMGR_FLAG_SELF,              /* flags                  */
+                &connect_funcs, /* connect routines       */
+                &io_funcs,      /* I/O routines           */
+                &attr);         /* handle                 */
+
+    if(id == -1) {
+        fprintf(stderr, "Unable to attach name for recourse manager.\n");
+        return DLT_RETURN_ERROR;
+    }
+
+    /* allocate a context structure */
+    *ctp = dispatch_context_alloc(*dpp);
+
+    return DLT_RETURN_OK;
+}
+
+
+void *gtest_dispatch_loop(void *arg) {
+    dispatch_t           *dpp;
+    dispatch_context_t   *ctp;
+    struct timespec      time_out;
+    int                  timedout;
+    time_out.tv_sec = 1;
+    time_out.tv_nsec = 2;
+
+
+    if (dlt_resmgr_create(&dpp, &ctp) != DLT_RETURN_OK) {
+        fprintf(stderr, "Could not create resource manager.\n");
+        return NULL;
+    }
+
+    while(dispatch_loop_command == 0) {
+        if ( (timedout = dispatch_timeout ( dpp, &time_out )) == -1 ) {
+            fprintf ( stderr, "Couldn't set timeout.\n");
+            return NULL;
+        }
+
+        if((ctp = dispatch_block(ctp)) == NULL) {
+            fprintf(stderr, "dispatch_block() error\n");
+            return NULL;
+        }
+
+        dispatch_handler(ctp);
+    }
+
+    dispatch_context_free ( ctp );
+
+    if ( dispatch_destroy ( dpp ) == -1 ) {
+        fprintf ( stderr, "Dispatch wasn't destroyed.\n");
+        return NULL;
+    }
+
+    return NULL;
+}
+
+int  run_dispatch_loop() {
+    int  res = 0, fd = -1, retry = 5;
+
+    if (pthread_create(&loophandle, NULL, gtest_dispatch_loop, NULL) == -1) {
+        fprintf(stderr, "%s: pthread_create() failed: %s", __func__, strerror(errno));
+        res = -1;
+    };
+
+    while(fd == -1 && retry > 0) {
+        fd = open(DLT_QNX_MESSAGE_IPC_CHANNEL_NAME, O_RDONLY);
+        retry--;
+        usleep(100000);
+    }
+
+    if (retry)
+        close(fd);
+    else
+        res = -1;
+
+    return res;
+}
+
+int terminate_dispatch_loop(/*name_attach_t *attach, pthread_t h*/) {
+    char        data[] = TERMINATIONCODE;
+    int         fd, res = 0;
+
+    fd = open(DLT_QNX_MESSAGE_IPC_CHANNEL_NAME, O_RDWR);
+
+    if (fd >= 0) {
+        res = write(fd, data, sizeof(data));
+
+        if (res < 0) {
+            fprintf(stderr, "%s: write() failed: %s", __func__, strerror(errno));
+        }
+
+        close(fd);
+    } else {
+        fprintf(stderr, "%s: open() failed: %s", __func__, strerror(errno));
+        res = -1;
+    }
+
+    return res > 0 ? 0: -1;
+}
+
+
+class DltUserTestEnv: public ::testing::Environment {
+public:
+    void SetUp() {
+        run_dispatch_loop();
+    }
+
+    void TearDown() {
+        terminate_dispatch_loop();
+    }
+};
+
+
+
+#endif
+
 /*/////////////////////////////////////// */
 /* start initial dlt */
 TEST(t_dlt_init, onetime)
@@ -156,7 +340,6 @@ TEST(t_dlt_user_log_write_start, normal)
 {
     DltContext context;
     DltContextData contextData;
-
 
     EXPECT_LE(DLT_RETURN_OK, dlt_register_app("TUSR", "dlt_user.c tests"));
     EXPECT_LE(DLT_RETURN_OK, dlt_register_context(&context, "TEST", "dlt_user.c t_dlt_user_log_write_start normal"));
@@ -5337,6 +5520,10 @@ TEST(t_dlt_user_shutdown_while_init_is_running, normal) {
 /* main */
 int main(int argc, char **argv)
 {
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+        DltUserTestEnv* env = new DltUserTestEnv();
+    ::testing::AddGlobalTestEnvironment(env);
+#endif
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

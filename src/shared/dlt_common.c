@@ -2111,6 +2111,9 @@ DltReturnValue dlt_receiver_init(DltReceiver *receiver, int fd, DltReceiverType 
         receiver->backup_buf = NULL;
         receiver->buffer = (char *)calloc(1, (size_t)buffersize);
         receiver->buffersize = (uint32_t)buffersize;
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+        receiver->is_unregistering = false;
+#endif
     }
 
     if (NULL == receiver->buffer) {
@@ -2217,7 +2220,57 @@ int dlt_receiver_receive(DltReceiver *receiver)
         receiver->bytesRcvd = read(receiver->fd,
                                    receiver->buf + receiver->lastBytesRcvd,
                                    receiver->buffersize - (uint32_t) receiver->lastBytesRcvd);
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+    else if (receiver->type == DLT_CLIENT_RECEIVE_MSG)
+    {
+        /* wait for data from server of resource manager */
+        if (receiver->attach) {
+            io_write_t whdr;
+            int recv_id = MsgReceive (receiver->attach->chid, &whdr, sizeof(whdr), NULL);
 
+            if (recv_id > 0) {
+                if (whdr.i.nbytes <= receiver->buffersize - (uint32_t) receiver->lastBytesRcvd) {
+                    receiver->bytesRcvd = MsgRead (recv_id, receiver->buf + receiver->lastBytesRcvd, whdr.i.nbytes, sizeof (whdr));
+
+                    if (receiver->bytesRcvd == -1) {
+                        dlt_vlog(LOG_ERR, "RecvMessage: MsgReadv returned an error! errno %d (%s))\n", errno, strerror(errno)); // NOLINT c-style vararg functions
+                    }
+                    else {
+                        MsgReply(recv_id, EOK, NULL, 0);
+                    }
+                }
+                else {
+                    dlt_vlog(LOG_ERR, "RecvMessage: Not enough space\n");
+                }
+            }
+            else
+            {
+                if (errno == EFAULT && receiver->is_unregistering) {
+                    /* After a client sends unregister request to the daemon,
+                     * the daemon closes side of the connection which results in
+                     * MsgReceive returning EBADF. Do not spam redundantly the console.
+                     */
+                    dlt_vlog(LOG_DEBUG, "MsgReceive returned an error due to a client unregistering...\n");
+                }
+                else if (errno != ETIMEDOUT && errno != EINTR) {
+                    dlt_vlog(LOG_ERR, "RecvMessage: MsgReceive returned an error! errno %d (%s))\n", errno, strerror(errno)); // NOLINT c-style vararg functions
+                }
+            }
+        } else {
+            dlt_vlog(LOG_ERR, "dlt_receiver_receive() after dlt_free()\n"); // NOLINT c-style vararg functions
+            return -1;
+        }
+    }
+    else if (receiver->type == DLT_RECEIVE_MSG)
+    {
+        /* wait for data from client of resource manager */
+        receiver->nbytes = resmgr_msgread(&receiver->ctp->resmgr_context,
+                                             receiver->buf + receiver->lastBytesRcvd,
+                                             receiver->buffersize - (uint32_t) receiver->lastBytesRcvd,
+                                             receiver->offset);
+        receiver->bytesRcvd = receiver->nbytes;
+    }
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
     else { /* receiver->type == DLT_RECEIVE_UDP_SOCKET */
         /* wait for data from UDP socket */
         addrlen = sizeof(receiver->addr);

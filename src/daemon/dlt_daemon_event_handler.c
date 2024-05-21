@@ -168,6 +168,9 @@ static void dlt_event_handler_disable_fd(DltEventHandler *ev, int fd)
     }
 }
 
+
+extern pthread_mutex_t  msg_thread_lock;
+
 /** @brief Catch and process incoming events.
  *
  * This function waits for events on all connections. Once an event raise,
@@ -257,13 +260,32 @@ int dlt_daemon_handle_event(DltEventHandler *pEvent,
             continue;
         }
 
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+        if (pthread_mutex_lock(&msg_thread_lock) == 0) {
+            /* From now on, callback is correct */
+            if (callback(daemon,
+                        daemon_local,
+                        con->receiver,
+                        daemon_local->flags.vflag) == -1) {
+                dlt_vlog(LOG_CRIT, "Processing from %u handle type failed!\n",
+                        type);
+
+                pthread_mutex_unlock(&msg_thread_lock);
+                return -1;
+            }
+            pthread_mutex_unlock(&msg_thread_lock);
+        } else {
+            dlt_vlog(LOG_ERR, "%s: pthread_mutex_lock() failed: %s", __func__, strerror(errno));
+        }
+#else
         /* From now on, callback is correct */
         if (callback(daemon,
-                     daemon_local,
-                     con->receiver,
-                     daemon_local->flags.vflag) == -1) {
+                    daemon_local,
+                    con->receiver,
+                    daemon_local->flags.vflag) == -1) {
             dlt_vlog(LOG_CRIT, "Processing from %u handle type failed!\n",
-                     type);
+                    type);
+
             return -1;
         }
 #ifdef DLT_SYSTEMD_WATCHDOG_ENABLE

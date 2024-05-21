@@ -89,6 +89,11 @@
 #ifdef DLT_SYSTEMD_WATCHDOG_ENABLE
 #   include <systemd/sd-daemon.h>
 #endif
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+#   include <sys/neutrino.h>
+#   include <sys/iofunc.h>
+#   include <sys/dispatch.h>
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
 char *app_recv_buffer = NULL; /* pointer to receiver buffer for application msges */
 
@@ -505,8 +510,13 @@ static void dlt_daemon_application_reset_user_handle(DltDaemon *daemon,
         }
     }
 
-    if (application->owns_user_handle)
+    if (application->owns_user_handle) {
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+        name_close( application->user_handle );
+#else /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
         close(application->user_handle);
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
+    }
 
     application->user_handle = DLT_FD_INIT;
     application->owns_user_handle = false;
@@ -526,9 +536,9 @@ DltDaemonApplication *dlt_daemon_application_add(DltDaemon *daemon,
     int dlt_user_handle;
     bool owns_user_handle;
     DltDaemonRegisteredUsers *user_list = NULL;
-#ifdef DLT_DAEMON_USE_FIFO_IPC
+#if (defined DLT_DAEMON_USE_FIFO_IPC || defined DLT_DAEMON_USE_QNX_MESSAGE_IPC)
     (void)fd;  /* To avoid compiler warning : unused variable */
-    char filename[DLT_DAEMON_COMMON_TEXTBUFSIZE];
+    char filename[DLT_DAEMON_COMMON_TEXTBUFSIZE] = {0};
 #endif
 
     if ((daemon == NULL) || (apid == NULL) || (apid[0] == '\0') || (ecu == NULL))
@@ -631,6 +641,17 @@ DltDaemonApplication *dlt_daemon_application_add(DltDaemon *daemon,
         if (fd >= DLT_FD_MINIMUM) {
             dlt_user_handle = fd;
             owns_user_handle = false;
+        }
+#elif defined DLT_DAEMON_USE_QNX_MESSAGE_IPC
+        snprintf(filename,
+                 DLT_DAEMON_COMMON_TEXTBUFSIZE,
+                 "dltapp%d",
+                 pid);
+        dlt_user_handle = name_open( filename, 0 );
+        if (dlt_user_handle < 0) {
+            dlt_vlog(LOG_ERR, "name_open() failed to %s, errno=%d (%s)!\n", filename, errno, strerror(errno));
+        } else {
+            owns_user_handle = true;
         }
 #endif
 #ifdef DLT_DAEMON_USE_FIFO_IPC
@@ -1563,9 +1584,15 @@ int dlt_daemon_user_send_log_level(DltDaemon *daemon, DltDaemonContext *context,
 
     /* log to FIFO */
     errno = 0;
+#ifndef DLT_DAEMON_USE_QNX_MESSAGE_IPC
     ret = dlt_user_log_out2_with_timeout(context->user_handle,
                             &(userheader), sizeof(DltUserHeader),
                             &(usercontext), sizeof(DltUserControlMsgLogLevel));
+#else
+    ret = dlt_user_log_out2_qnx_msg(context->user_handle,
+                            &(userheader), sizeof(DltUserHeader),
+                            &(usercontext), sizeof(DltUserControlMsgLogLevel));
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
     if (ret < DLT_RETURN_OK) {
         dlt_vlog(LOG_ERR, "Failed to send data to application in %s: %s",
@@ -1599,9 +1626,15 @@ int dlt_daemon_user_send_log_state(DltDaemon *daemon, DltDaemonApplication *app,
     logstate.log_state = daemon->connectionState;
 
     /* log to FIFO */
+#ifndef DLT_DAEMON_USE_QNX_MESSAGE_IPC
     ret = dlt_user_log_out2_with_timeout(app->user_handle,
                             &(userheader), sizeof(DltUserHeader),
                             &(logstate), sizeof(DltUserControlMsgLogState));
+#else
+    ret = dlt_user_log_out2_qnx_msg(app->user_handle,
+                            &(userheader), sizeof(DltUserHeader),
+                            &(logstate), sizeof(DltUserControlMsgLogState));
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 
     if (ret < DLT_RETURN_OK) {
         if (errno == EPIPE)

@@ -1548,8 +1548,71 @@ TEST(t_dlt_daemon_user_send_default_update, nullpointer)
 }
 /* End Method: dlt_daemon_common::dlt_daemon_user_send_default_update */
 
+#ifdef __QNX__
+#include <sys/netmgr.h>
 
 
+void *gtest_dispatch_loop(void *arg) {
+    int             rcvid;
+    uint64_t        data;
+
+    for (;;) {
+        rcvid = MsgReceive(attach->chid, &data, sizeof(data), NULL);
+
+        if (rcvid > 0) {
+            MsgReply(rcvid, EOK, NULL, 0);
+
+            if (data == 0xdead) 
+                break;
+        } else
+            break;
+    }
+
+    return NULL;
+}
+
+int  run_dispatch_loop() {
+    char buf[128];
+    int  res = 0;
+
+    sprintf(buf, "dltapp%d", getpid());
+    attach = name_attach(NULL, buf, _NTO_CHF_DISCONNECT);
+
+    if (attach) {
+        if (pthread_create(&loophandle, NULL, gtest_dispatch_loop, NULL) == -1) {
+            printf("%s: pthread_create() failed: %s", __func__, strerror(errno));
+            res = -1;
+        } else {
+            coid = ConnectAttach(ND_LOCAL_NODE, 0, attach->chid, _NTO_SIDE_CHANNEL , 0);
+            if (coid == -1) {
+                printf("%s: ConnectAttach() failed: %s", __func__, strerror(errno));
+                res = -1;
+            }
+        }
+    } else {
+        printf("%s: name_attach() failed: %s", __func__, strerror(errno));
+        res = -1;
+    }
+
+
+    return res;
+}
+
+int terminate_dispatch_loop(/*name_attach_t *attach, pthread_t h*/) {
+    uint64_t    data = 0xdead;
+
+    if (MsgSend(coid, &data, sizeof(data), NULL, 0)  != -1) {
+        pthread_join(loophandle, NULL);
+        ConnectDetach(coid);
+        name_detach(attach, 0);
+        return 0;
+    } else {
+        printf("%s: MsgSend() failed: %s", __func__, strerror(errno));
+        return -1;
+    }
+
+}
+#endif
 
 /* Begin Method: dlt_daemon_common::dlt_daemon_user_send_log_level */
 TEST(t_dlt_daemon_user_send_log_level, normal)
@@ -1563,6 +1626,10 @@ TEST(t_dlt_daemon_user_send_log_level, normal)
     DltDaemonApplication *app = NULL;
     char ecu[] = "ECU1";
     int fd = 42;
+
+#ifdef __QNX__
+    EXPECT_EQ(0, run_dispatch_loop());
+#endif
 
     /* Normal Use-Case */
     EXPECT_EQ(0,
@@ -1579,7 +1646,11 @@ TEST(t_dlt_daemon_user_send_log_level, normal)
                                         DLT_LOG_DEFAULT,
                                         DLT_TRACE_STATUS_DEFAULT,
                                         0,
+#ifdef __QNX__
+                                        coid,
+#else
                                         1,
+#endif
                                         desc,
                                         ecu,
                                         0);
@@ -1589,7 +1660,11 @@ TEST(t_dlt_daemon_user_send_log_level, normal)
     EXPECT_LE(0, dlt_daemon_contexts_clear(&daemon, ecu, 0));
     EXPECT_LE(0, dlt_daemon_applications_clear(&daemon, ecu, 0));
     EXPECT_EQ(0, dlt_daemon_free(&daemon, 0));
+#ifdef __QNX__
+    EXPECT_EQ(0, terminate_dispatch_loop());
+#endif
 }
+
 TEST(t_dlt_daemon_user_send_log_level, abnormal)
 {
 /*    DltDaemon daemon; */
@@ -1634,6 +1709,9 @@ TEST(t_dlt_daemon_user_send_log_level, nullpointer)
 }
 /* End Method: dlt_daemon_common::dlt_daemon_user_send_log_level */
 
+name_attach_t *attach = NULL;
+pthread_t   loophandle = 0;
+int coid = -1;
 
 
 

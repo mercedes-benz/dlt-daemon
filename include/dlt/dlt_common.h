@@ -111,6 +111,17 @@
 #      define DLT_PACKED
 #   endif
 
+#   ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+#   define DLT_QNX_MESSAGE_IPC_CHANNEL_NAME  "<device>"
+#   ifdef __QNX__
+#       include <sys/iofunc.h>
+#       include <sys/resmgr.h>
+#       include <sys/dispatch.h>
+#   else
+#       error DLT_IPC="QNX_MESSAGE" can only be built for QNX
+#   endif /* __QNX__ */
+#   endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
+
 /*
  * Macros to swap the byte order.
  */
@@ -409,7 +420,11 @@ typedef enum
 {
     DLT_RECEIVE_SOCKET,
     DLT_RECEIVE_UDP_SOCKET,
-    DLT_RECEIVE_FD
+    DLT_RECEIVE_FD,
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+    DLT_RECEIVE_MSG,
+    DLT_CLIENT_RECEIVE_MSG,
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 } DltReceiverType;
 
 /**
@@ -784,6 +799,15 @@ typedef struct
     DltReceiverType type;     /**< type of connection handle */
     int32_t buffersize;       /**< size of receiver buffer */
     struct sockaddr_in addr;  /**< socket address information */
+#ifdef DLT_DAEMON_USE_QNX_MESSAGE_IPC
+    dispatch_context_t *ctp;    /**< Context information that's passed between resource-manager functions */
+    int offset;               /**< offset for resmgr_msgread() */
+    int nbytes;               /**< received bytes  for resmgr_msgread() */
+    void *daemon;             /**< pointer to DltDaemon */
+    void *daemon_local;       /**< pointer to DltDaemonLocal */
+    name_attach_t *attach;
+    bool is_unregistering;
+#endif /* DLT_DAEMON_USE_QNX_MESSAGE_IPC */
 } DltReceiver;
 
 typedef struct
