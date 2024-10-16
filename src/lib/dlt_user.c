@@ -229,7 +229,6 @@ static DltReturnValue dlt_unregister_app_util(bool force_sending_messages);
 static DltReturnValue dlt_user_output_internal_msg(DltLogLevelType loglevel, const char *text, void* params);
 DltTraceLoadSettings* trace_load_settings = NULL;
 uint32_t trace_load_settings_count = 0;
-pthread_rwlock_t trace_load_rw_lock = PTHREAD_RWLOCK_INITIALIZER;
 #endif
 
 DltReturnValue dlt_user_check_library_version(const char *user_major_version, const char *user_minor_version)
@@ -513,8 +512,8 @@ DltReturnValue dlt_init(void)
 
 #endif
 #ifdef DLT_TRACE_LOAD_CTRL_ENABLE
-    pthread_rwlock_wrlock(&trace_load_rw_lock);
 
+    DLT_SEM_LOCK();
     trace_load_settings = malloc(sizeof(DltTraceLoadSettings));
     if (trace_load_settings == NULL) {
         dlt_vlog(LOG_ERR, "Failed to allocate memory for trace load settings\n");
@@ -526,8 +525,7 @@ DltReturnValue dlt_init(void)
     trace_load_settings[0].hard_limit = DLT_TRACE_LOAD_CLIENT_HARD_LIMIT_DEFAULT;
     strncpy(trace_load_settings[0].apid, dlt_user.appID, DLT_ID_SIZE);
     trace_load_settings_count = 1;
-
-    pthread_rwlock_unlock(&trace_load_rw_lock);
+    DLT_SEM_FREE();
 
 #endif
 #ifdef DLT_LIB_USE_UNIX_SOCKET_IPC
@@ -958,10 +956,6 @@ void dlt_user_atexit_handler(void)
     /* Cleanup */
     /* Ignore return value */
     dlt_free();
-
-#ifdef DLT_TRACE_LOAD_CTRL_ENABLE
-    pthread_rwlock_destroy(&trace_load_rw_lock);
-#endif
 }
 
 int dlt_user_atexit_blow_out_user_buffer(void)
@@ -1543,8 +1537,20 @@ DltReturnValue dlt_register_context_ll_ts_llccb(DltContext *handle,
 
     dlt_user.dlt_ll_ts_num_entries++;
 
-    DLT_SEM_FREE();
+#ifdef DLT_TRACE_LOAD_CTRL_ENABLE
+    DltTraceLoadSettings* settings = dlt_find_runtime_trace_load_settings(
+        trace_load_settings,
+        trace_load_settings_count,
+        dlt_user.appID,
+        ctx_entry->contextID);
+    if (settings == NULL) {
+        dlt_vlog(LOG_WARNING, "No trace load settings found for %s.%s\n", dlt_user.appID, log.handle->contextID);
+    } else {
+        ctx_entry->trace_load_settings = settings;
+    }
 
+#endif
+    DLT_SEM_FREE();
     return dlt_user_log_send_register_context(&log);
 }
 
@@ -4169,19 +4175,16 @@ DltReturnValue dlt_user_log_send_log(DltContextData *log, const int mtype, int *
             /* check trace load before output */
             if (!sent_size)
             {
-                pthread_rwlock_wrlock(&trace_load_rw_lock);
-                DltTraceLoadSettings* settings =
-                    dlt_find_runtime_trace_load_settings(
-                        trace_load_settings, trace_load_settings_count, dlt_user.appID, log->handle->contextID);
+                DLT_SEM_LOCK();
                 const bool trace_load_in_limits = dlt_check_trace_load(
-                        settings,
+                        dlt_user.dlt_ll_ts[log->handle->log_level_pos].trace_load_settings,
                         log->log_level, time_stamp,
                         sizeof(DltUserHeader)
                             + msg.headersize - sizeof(DltStorageHeader)
                             + log->size,
                         dlt_user_output_internal_msg,
                         NULL);
-                pthread_rwlock_unlock(&trace_load_rw_lock);
+                DLT_SEM_FREE();
                 if (!trace_load_in_limits){
                     return DLT_RETURN_LOAD_EXCEEDED;
                 }
@@ -4403,7 +4406,6 @@ DltReturnValue dlt_user_log_send_register_context(DltContextData *log)
                                                usercontext.description_length);
 
     return DLT_RETURN_OK;
-
 }
 
 DltReturnValue dlt_user_log_send_unregister_context(DltContextData *log)
@@ -4882,18 +4884,16 @@ DltReturnValue dlt_user_log_check_user_message(void)
                     trace_load_settings_user_messages =
                         (DltUserControlMsgTraceSettingMsg *)(receiver->buf + sizeof(DltUserHeader) + sizeof(uint32_t));
 
-                    pthread_rwlock_wrlock(&trace_load_rw_lock);
+                    DLT_SEM_LOCK();
 
                     // Remove the default created at startup
                     if (trace_load_settings != NULL) {
                         free(trace_load_settings);
                     }
 
-                    char msg[255];
                     trace_load_settings_alloc_size = sizeof(DltTraceLoadSettings) * trace_load_settings_user_messages_count;
                     trace_load_settings = malloc(trace_load_settings_alloc_size);
                     if (trace_load_settings == NULL) {
-                        pthread_rwlock_unlock(&trace_load_rw_lock);
                         dlt_log(LOG_ERR, "Failed to allocate memory for trace load settings\n");
                         return DLT_RETURN_ERROR;
                     }
@@ -4904,29 +4904,33 @@ DltReturnValue dlt_user_log_check_user_message(void)
                         trace_load_settings[i].soft_limit = trace_load_settings_user_messages[i].soft_limit;
                         trace_load_settings[i].hard_limit = trace_load_settings_user_messages[i].hard_limit;
                     }
-                    trace_load_settings_count = trace_load_settings_user_messages_count;
-                    pthread_rwlock_unlock(&trace_load_rw_lock);
 
-                    // must be sent with unlocked trace_load_rw_lock
-                    for (i = 0; i < trace_load_settings_user_messages_count; i++) {
-                        if (trace_load_settings[i].ctid[0] == '\0') {
-                            snprintf(
-                                msg, sizeof(msg),
-                                "Received trace load settings: apid=%.4s, soft_limit=%u, hard_limit=%u\n",
-                                trace_load_settings[i].apid,
-                                trace_load_settings[i].soft_limit,
-                                trace_load_settings[i].hard_limit);
-                        } else {
-                            snprintf(
-                                msg, sizeof(msg),
-                                "Received trace load settings: apid=%.4s, ctid=%.4s, soft_limit=%u, hard_limit=%u\n",
-                                trace_load_settings[i].apid,
-                                trace_load_settings[i].ctid,
-                                trace_load_settings[i].soft_limit,
-                                trace_load_settings[i].hard_limit);
-                        }
-                        dlt_user_output_internal_msg(DLT_LOG_INFO, msg, NULL);
+                    trace_load_settings_count = trace_load_settings_user_messages_count;
+                    for (i = 0; i < dlt_user.dlt_ll_ts_num_entries; ++i) {
+                        dlt_ll_ts_type* ctx_entry = &dlt_user.dlt_ll_ts[i];
+                        ctx_entry->trace_load_settings = dlt_find_runtime_trace_load_settings(
+                            trace_load_settings, trace_load_settings_count, dlt_user.appID, ctx_entry->contextID);
                     }
+                    DLT_SEM_FREE();
+
+                    // The log messages only can be produced safely when
+                    // the trace load settings are set up fully.
+                    char msg[255];
+                    if (trace_load_settings[i].ctid[0] == '\0') {
+                        snprintf(msg, sizeof(msg), "Received trace load settings: apid=%.4s, soft_limit=%u, hard_limit=%u\n",
+                                 trace_load_settings[i].apid,
+                                 trace_load_settings[i].soft_limit,
+                                 trace_load_settings[i].hard_limit);
+                    } else {
+                        snprintf(
+                            msg, sizeof(msg),
+                            "Received trace load settings: apid=%.4s, ctid=%.4s, soft_limit=%u, hard_limit=%u\n",
+                            trace_load_settings[i].apid,
+                            trace_load_settings[i].ctid,
+                            trace_load_settings[i].soft_limit,
+                            trace_load_settings[i].hard_limit);
+                    }
+                    dlt_user_output_internal_msg(DLT_LOG_INFO, msg, NULL);
 
                     /* keep not read data in buffer */
                     if (dlt_receiver_remove(receiver, trace_load_settings_user_message_bytes_required)
@@ -5349,9 +5353,6 @@ static void dlt_fork_child_fork_handler()
     g_dlt_is_child = 1;
     dlt_user_init_state = INIT_UNITIALIZED;
     dlt_user.dlt_log_handle = -1;
-#ifdef DLT_TRACE_LOAD_CTRL_ENABLE
-    pthread_rwlock_unlock(&trace_load_rw_lock);
-#endif
 }
 
 

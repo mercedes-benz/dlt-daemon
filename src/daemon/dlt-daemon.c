@@ -1636,6 +1636,13 @@ int main(int argc, char *argv[])
     dlt_gateway_deinit(&daemon_local.pGateway, daemon_local.flags.vflag);
 
     dlt_daemon_free(&daemon, daemon_local.flags.vflag);
+#ifdef DLT_TRACE_LOAD_CTRL_ENABLE
+    if (daemon.preconfigured_trace_load_settings != NULL) {
+        free(daemon.preconfigured_trace_load_settings);
+        daemon.preconfigured_trace_load_settings = NULL;
+    }
+    pthread_rwlock_destroy(&trace_load_rw_lock);
+#endif
 
     dlt_log(LOG_NOTICE, "Leaving DLT daemon\n");
 
@@ -2747,11 +2754,6 @@ int dlt_daemon_process_client_connect(DltDaemon *daemon,
         /* send new log state to all applications */
         daemon->connectionState = 1;
         dlt_daemon_user_send_all_log_state(daemon, verbose);
-
-#ifdef DLT_TRACE_LOAD_CTRL_ENABLE
-        /* Reset number of received bytes from FIFO */
-        daemon->bytes_recv = 0;
-#endif
     }
 
     return 0;
@@ -3142,14 +3144,6 @@ int dlt_daemon_process_user_messages(DltDaemon *daemon,
                 "dlt_receiver_receive_fd() for user messages failed!\n");
         return -1;
     }
-
-#ifdef DLT_TRACE_LOAD_CTRL_ENABLE
-    /* Count up number of received bytes from FIFO */
-    if (receiver->bytesRcvd > receiver->lastBytesRcvd)
-    {
-        daemon->bytes_recv += receiver->bytesRcvd - receiver->lastBytesRcvd;
-    }
-#endif
 
     /* look through buffer as long as data is in there */
     while ((receiver->bytesRcvd >= min_size) && run_loop) {
@@ -3976,26 +3970,39 @@ bool trace_load_keep_message(DltDaemonApplication *app,
         app->apid,
     };
 
-    DltTraceLoadSettings *trace_load_settings =
-        dlt_find_runtime_trace_load_settings(
-            app->trace_load_settings, app->trace_load_settings_count,
-            app->apid, msg->extendedheader->ctid);
+    DltDaemonContext *context = dlt_daemon_context_find(
+        daemon,
+        app->apid,
+        msg->extendedheader->ctid,
+        daemon->ecuid,
+        verbose);
 
-    if (trace_load_settings != NULL) {
-        pthread_rwlock_wrlock(&trace_load_rw_lock);
-        keep_message = dlt_check_trace_load(
-            trace_load_settings, mtin, msg->headerextra.tmsp, size,
-            dlt_daemon_output_internal_msg, (void *)(&params));
-        pthread_rwlock_unlock(&trace_load_rw_lock);
+
+    if (context == NULL) {
+        context = dlt_daemon_context_add(
+            daemon,
+            app->apid,
+            msg->extendedheader->ctid,
+            daemon->default_log_level,
+            daemon->default_trace_status,
+            0,
+            app->user_handle,
+            "",
+            daemon->ecuid,
+            verbose);
+        if (context == NULL) {
+            dlt_vlog(LOG_WARNING,
+                     "Can't add ContextID '%.4s' for ApID '%.4s' in %s\n",
+                     msg->extendedheader->ctid, app->apid, __func__);
+            return false;
+        }
     }
-    else {
-        dlt_vlog(
-            LOG_ERR,
-            "Failed to lookup trace load limits for %s, "
-            "dropping message, likely app was not registered properly\n",
-            app->apid);
-        keep_message = false;
-    }
+
+    pthread_rwlock_wrlock(&trace_load_rw_lock);
+    keep_message = dlt_check_trace_load(
+        context->trace_load_settings, mtin, msg->headerextra.tmsp, size,
+        dlt_daemon_output_internal_msg, (void *)(&params));
+    pthread_rwlock_unlock(&trace_load_rw_lock);
 
     return keep_message;
 }
